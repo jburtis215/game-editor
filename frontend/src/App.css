@@ -1,6 +1,6 @@
 :root {
-  --font-display: 'Orbitron', ui-sans-serif, system-ui, sans-serif;
-  --font-body: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-display: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-body: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
 }
 
 /*
@@ -62,13 +62,14 @@
 }
 
 /* Derived accent glows + page background, shared by all themes. Glow alpha is kept
-   modest so accents read as a gentle halo rather than an intense neon bloom. */
+   very low so accents read as a subtle focus ring rather than a neon bloom — the
+   professional look leans on border/background changes for feedback, not halos. */
 :root {
-  --orange-glow: color-mix(in srgb, var(--orange) 28%, transparent);
-  --green-glow: color-mix(in srgb, var(--green) 28%, transparent);
+  --orange-glow: color-mix(in srgb, var(--orange) 12%, transparent);
+  --green-glow: color-mix(in srgb, var(--green) 12%, transparent);
   --page-bg:
-    radial-gradient(1100px 720px at 82% -12%, color-mix(in srgb, var(--orange) 7%, transparent), transparent 60%),
-    radial-gradient(960px 680px at -12% 112%, color-mix(in srgb, var(--green) 7%, transparent), transparent 55%),
+    radial-gradient(1100px 720px at 82% -12%, color-mix(in srgb, var(--orange) 3%, transparent), transparent 60%),
+    radial-gradient(960px 680px at -12% 112%, color-mix(in srgb, var(--green) 3%, transparent), transparent 55%),
     var(--bg-0);
 }
 
@@ -105,25 +106,19 @@ body {
   align-items: center;
   gap: 1.5rem;
   padding: 0.6rem 1.25rem;
-  background: rgba(8, 11, 18, 0.85);
+  background: color-mix(in srgb, var(--bg-1) 85%, transparent);
   border-bottom: 1px solid var(--line);
-  box-shadow:
-    0 1px 0 color-mix(in srgb, var(--orange) 30%, transparent),
-    0 10px 28px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
   backdrop-filter: blur(6px);
 }
 
 .app__title {
   font-family: var(--font-display);
-  font-weight: 800;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  font-size: 1.05rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  font-size: 1.1rem;
   text-decoration: none;
-  background: linear-gradient(90deg, var(--orange), var(--green));
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+  color: var(--text);
 }
 
 .app__links {
@@ -133,11 +128,11 @@ body {
 
 .app__link {
   font-family: var(--font-display);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  font-size: 0.72rem;
+  letter-spacing: 0;
+  font-size: 0.85rem;
+  font-weight: 500;
   padding: 0.45rem 0.95rem;
-  border-radius: 9px;
+  border-radius: 8px;
   text-decoration: none;
   color: var(--muted);
   border: 1px solid var(--line);
@@ -145,20 +140,18 @@ body {
   transition:
     color 0.12s,
     border-color 0.12s,
-    box-shadow 0.12s;
+    background 0.12s;
 }
 
 .app__link:hover {
   color: var(--text);
-  border-color: var(--orange);
-  box-shadow: 0 0 14px var(--orange-glow);
+  border-color: var(--muted);
 }
 
 .app__link--active {
-  color: #06210f;
-  background: var(--green);
-  border-color: var(--green);
-  box-shadow: 0 0 18px var(--green-glow);
+  color: #fff;
+  background: var(--orange);
+  border-color: var(--orange);
 }
 
 /* Theme switcher button (pushed to the far right of the nav). */
@@ -168,23 +161,22 @@ body {
   align-items: center;
   gap: 0.5rem;
   font-family: var(--font-display);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  font-size: 0.7rem;
+  letter-spacing: 0;
+  font-size: 0.82rem;
+  font-weight: 500;
   padding: 0.45rem 0.9rem;
-  border-radius: 9px;
+  border-radius: 8px;
   color: var(--text);
   background: var(--bg-1);
   border: 1px solid var(--line);
   cursor: pointer;
   transition:
     border-color 0.12s,
-    box-shadow 0.12s;
+    background 0.12s;
 }
 
 .app__theme:hover {
-  border-color: var(--orange);
-  box-shadow: 0 0 14px var(--orange-glow);
+  border-color: var(--muted);
 }
 
 .app__theme-swatch {
@@ -192,7 +184,6 @@ body {
   height: 13px;
   border-radius: 50%;
   background: linear-gradient(135deg, var(--orange), var(--green));
-  box-shadow: 0 0 8px var(--orange-glow);
 }
 
 /* Page content fills the remaining height below the nav. */
@@ -227,10 +218,10 @@ body {
 
 .toolbar__button {
   font-family: var(--font-display);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: 0;
   padding: 0.45rem 0.85rem;
-  font-size: 0.7rem;
+  font-size: 0.82rem;
+  font-weight: 500;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--bg-2);
@@ -239,20 +230,18 @@ body {
   transition:
     color 0.12s,
     border-color 0.12s,
-    box-shadow 0.12s;
+    background 0.12s;
 }
 
 .toolbar__button:hover {
   color: var(--text);
-  border-color: var(--orange);
-  box-shadow: 0 0 12px var(--orange-glow);
+  border-color: var(--muted);
 }
 
 .toolbar__button--active {
-  color: #06210f;
-  background: var(--green);
-  border-color: var(--green);
-  box-shadow: 0 0 16px var(--green-glow);
+  color: #fff;
+  background: var(--orange);
+  border-color: var(--orange);
 }
 
 .canvas {
@@ -266,18 +255,17 @@ body {
   touch-action: none;
 }
 
-/* Neon glow on drawn shape outlines. */
 .shape-outline {
-  filter: drop-shadow(0 0 4px var(--green-glow));
+  filter: none;
 }
 
 /* --- Buttons (global) --- */
 .btn {
   font-family: var(--font-display);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  padding: 0.45rem 0.95rem;
-  font-size: 0.72rem;
+  letter-spacing: 0;
+  padding: 0.5rem 1rem;
+  font-size: 0.85rem;
+  font-weight: 500;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--bg-1);
@@ -296,8 +284,7 @@ body {
 .btn--primary {
   background: var(--orange);
   border-color: var(--orange);
-  color: #2a1303;
-  box-shadow: 0 0 16px var(--orange-glow);
+  color: #fff;
 }
 
 .btn--primary:hover {
@@ -307,12 +294,12 @@ body {
 
 .btn--add {
   border-style: dashed;
-  color: var(--green-soft);
-  border-color: color-mix(in srgb, var(--green) 60%, transparent);
+  color: var(--orange);
+  border-color: color-mix(in srgb, var(--orange) 45%, transparent);
   background: transparent;
 }
 
 .btn--add:hover {
-  border-color: var(--green);
-  box-shadow: 0 0 16px var(--green-glow);
+  border-color: var(--orange);
+  background: color-mix(in srgb, var(--orange) 6%, transparent);
 }

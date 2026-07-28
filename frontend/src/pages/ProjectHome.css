@@ -33,11 +33,10 @@
 
 .project-home__title {
   font-family: var(--font-display);
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
+  letter-spacing: -0.01em;
+  font-weight: 700;
   font-size: clamp(1.3rem, 3vw, 1.8rem);
-  color: var(--orange-soft);
-  text-shadow: 0 0 14px var(--orange-glow);
+  color: var(--text);
   margin: 0.25rem 0 0.9rem;
 }
 
@@ -50,10 +49,10 @@
 
 .project-tab {
   font-family: var(--font-display);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  font-size: 0.7rem;
-  padding: 0.5rem 0.95rem;
+  letter-spacing: 0;
+  font-size: 0.85rem;
+  font-weight: 500;
+  padding: 0.5rem 1rem;
   border: 1px solid var(--line);
   border-bottom: none;
   border-radius: 9px 9px 0 0;
@@ -63,19 +62,20 @@
   transition:
     color 0.12s,
     border-color 0.12s,
-    box-shadow 0.12s;
+    background 0.12s;
 }
 
 .project-tab:hover {
   color: var(--text);
-  border-color: var(--orange);
+  border-color: var(--muted);
 }
 
 .project-tab--active {
   color: var(--text);
-  border-color: var(--orange);
+  border-color: var(--line);
+  border-bottom: none;
   background: var(--bg-0);
-  box-shadow: 0 -2px 14px var(--orange-glow);
+  font-weight: 600;
 }
 
 .project-home__error {

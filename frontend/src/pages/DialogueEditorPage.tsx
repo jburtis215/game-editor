@@ -91,6 +91,12 @@ export default function DialogueEditorPage() {
   const [exportText, setExportText] = useState('');
   const [exportError, setExportError] = useState<string | null>(null);
   const [exportCopied, setExportCopied] = useState(false);
+  // "Merge" flow: point the current node at an existing node as an additional response,
+  // so multiple branches can converge back onto the same dialogue.
+  const [linking, setLinking] = useState(false);
+  const [linkCandidates, setLinkCandidates] = useState<DialogueNode[]>([]);
+  const [linkTargetId, setLinkTargetId] = useState<number | null>(null);
+  const [linkOptionLabel, setLinkOptionLabel] = useState('');
 
   // Load project-level game memory, including remembered choices/items/stats/flags.
   useEffect(() => {
@@ -291,6 +297,36 @@ export default function DialogueEditorPage() {
     if (viewMode === 'tree') loadTree(); // reflect the new node/edge in the graph
   }
 
+  // Open the merge picker: load the scene's other nodes so the current node can converge onto
+  // one that already exists (multiple branches → the same response, no new node).
+  async function openLinkPicker() {
+    if (sceneId == null || currentId == null) return;
+    setAdding(false);
+    const { data, error } = await api.GET('/api/scenes/{scene_id}/dialogues', {
+      params: { path: { scene_id: sceneId } },
+    });
+    if (error || !data) return setError('Failed to load scene nodes');
+    setError(null);
+    setLinkCandidates(data);
+    setLinkTargetId(null);
+    setLinkOptionLabel('');
+    setLinking(true);
+  }
+
+  // Attach an existing node as an additional response of the current one (a convergence edge).
+  async function handleLink() {
+    if (currentId == null || linkTargetId == null) return;
+    const { data, error } = await api.POST('/api/dialogues/{dialogue_id}/link', {
+      params: { path: { dialogue_id: currentId } },
+      body: { target_id: linkTargetId, option_label: linkOptionLabel },
+    });
+    if (error || !data) return setError('Failed to link response');
+    setError(null);
+    setDetail(data);
+    setLinking(false);
+    if (viewMode === 'tree') loadTree(); // show the new converging edge in the graph
+  }
+
   async function handleImportYarn() {
     if (sceneId == null || !yarnText.trim()) return;
     const attachTo = attachYarnToCurrent && currentId != null ? currentId : undefined;
@@ -358,6 +394,10 @@ export default function DialogueEditorPage() {
 
   const selectedScene = scenes.find((s) => s.id === sceneId) ?? null;
   const addLabel = currentId == null ? '＋ Add dialogue' : '＋ Add response';
+  // Nodes the current one can merge into: any other node not already one of its responses.
+  const linkableCandidates = linkCandidates.filter(
+    (node) => node.id !== currentId && !(detail?.responses ?? []).some((r) => r.id === node.id),
+  );
 
   return (
     <div className="dialogue-editor">
@@ -692,9 +732,68 @@ export default function DialogueEditorPage() {
                 )}
               </>
             ) : (
-              <button type="button" className="btn btn--add" onClick={() => setAdding(true)}>
-                {addLabel}
-              </button>
+              <div className="dialogue-editor__add-actions">
+                <button
+                  type="button"
+                  className="btn btn--add"
+                  onClick={() => {
+                    setLinking(false);
+                    setAdding(true);
+                  }}
+                >
+                  {addLabel}
+                </button>
+                {currentId != null && (
+                  <button type="button" className="btn" onClick={openLinkPicker}>
+                    🔗 Merge existing node
+                  </button>
+                )}
+              </div>
+            )}
+
+            {linking && !adding && currentId != null && (
+              <div className="dialogue-link">
+                <div className="dialogue-effects__header">
+                  Point this node at an existing one (multiple branches → the same response)
+                </div>
+                <div className="dialogue-effects__row">
+                  <select
+                    className="dialogue-effects__select"
+                    value={linkTargetId ?? ''}
+                    onChange={(event) =>
+                      setLinkTargetId(event.target.value ? Number(event.target.value) : null)
+                    }
+                  >
+                    <option value="">Choose a node…</option>
+                    {linkableCandidates.map((node) => (
+                      <option key={node.id} value={node.id}>
+                        {(node.character?.name ? `${node.character.name}: ` : '') +
+                          (node.text || node.title)}
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    className="dialogue-effects__input"
+                    value={linkOptionLabel}
+                    placeholder="Option label (optional)"
+                    onChange={(event) => setLinkOptionLabel(event.target.value)}
+                  />
+                  <button
+                    type="button"
+                    className="dialogue-effects__add"
+                    onClick={handleLink}
+                    disabled={linkTargetId == null}
+                  >
+                    Merge
+                  </button>
+                  <button type="button" className="btn" onClick={() => setLinking(false)}>
+                    Cancel
+                  </button>
+                </div>
+                {linkableCandidates.length === 0 && (
+                  <p className="response-wheel__empty">No other nodes in this scene to merge into yet.</p>
+                )}
+              </div>
             )}
           </div>
         )}

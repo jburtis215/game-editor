@@ -7,7 +7,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('api', '0014_remove_character_image_url'),
+        ('api', '0016_dialogue_graph'),
     ]
 
     operations = [

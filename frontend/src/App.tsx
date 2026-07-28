@@ -27,7 +27,7 @@ function navClass({ isActive }: { isActive: boolean }) {
 }
 
 export default function App() {
-  const [theme, setTheme] = useState<Theme>('neon');
+  const [theme, setTheme] = useState<Theme>('studio');
 
   // Load the user's saved theme on startup.
   useEffect(() => {
