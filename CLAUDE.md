@@ -206,6 +206,22 @@ module declarations for CSS/asset imports — keep it.
 - Add endpoints on the `api` object in `api/api.py`; use Ninja `Schema` classes for I/O. After
   changing a schema, regenerate the frontend types (`npm run gen:api`).
 
+### MCP server (`backend/mcp_server/`)
+An **MCP** server exposing the API as tools for an AI game-creation agent (`python -m mcp_server`,
+stdio; see its README for client wiring). It's a **client of the REST API over HTTP**, not a Django
+app — `client.py` is a thin httpx wrapper (`GAME_EDITOR_API_URL`, default
+`http://127.0.0.1:8000/api`), so tools can't bypass endpoint validation and the backend must be
+running. `server.py` holds a `FastMCP` instance with ~28 read/create/update tools mirroring the
+hierarchy (projects · levels · locations · scenes · characters · story state · dialogue, incl.
+`import_scene_yarn`/`export_scene_yarn`), three resources (`game-editor://projects`,
+`…/projects/{id}` = project+levels+scenes+characters, `…/scenes/{id}/yarn`) and a `build-game`
+prompt. **Tool docstrings are the agent-facing docs** — the requirement/effect vocabulary spelled
+out in `create_dialogue` must stay in sync with `DialogueRequirement`/`DialogueEffect` in
+`frontend/src/api/client.ts` (every entry keys off `state_key`; `change_stat` uses `amount`).
+`register_state_variable` is the one tool that composes instead of proxying (GET + PATCH of
+`project.state_schema`, using the UI's `flag_`/`choice_`/`item_`/`stat_` key convention) so
+agent-written keys still render labeled in the editor. No delete tools are exposed on purpose.
+
 ## Conventions
 
 - **Frontend: TypeScript everywhere.** Keep components small and single-purpose.
@@ -235,6 +251,7 @@ npm run gen:api -w frontend   # regenerate src/api/schema.d.ts from the API (bac
 ./.venv/bin/python manage.py makemigrations api && ./.venv/bin/python manage.py migrate
 ./.venv/bin/python manage.py seed_dialogue    # seed demo dialogue tree
 ./.venv/bin/pip install -r requirements.txt   # (re)install backend deps
+./.venv/bin/python -m mcp_server              # MCP server over stdio (API must be running)
 ```
 
 Postgres runs as a Homebrew service: `brew services start|stop postgresql@14`.
