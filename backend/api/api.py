@@ -80,6 +80,9 @@ class CharacterDetailOut(Schema):
     image_key: str = ""
     project_id: int | None = None
     related: list[RelatedCharacterOut] = []
+    # {"values": {key: value}, "own": [trait definition, ...]} — see Character.traits. The
+    # project's default traits are NOT merged in here; the client overlays them at render time.
+    traits: dict[str, Any] = {}
 
 
 class CharacterCreateIn(Schema):
@@ -93,6 +96,7 @@ class CharacterUpdateIn(Schema):
 
     name: str | None = None
     description: str | None = None
+    traits: dict[str, Any] | None = None
 
 
 class RelationshipCreateIn(Schema):
@@ -116,6 +120,8 @@ class ProjectOut(Schema):
     systems: dict[str, Any] = {}  # ArchitectState (per-system enabled + answers)
     hud_layout: dict[str, Any] = {}  # HudLayout ({systemId: {x, y}})
     state_schema: dict[str, Any] = {} # this is to help track effects/requirements in choices in dialogue
+    # Default character traits — a list of trait definitions applied to every character.
+    character_traits: list[dict[str, Any]] = []
 
 
 class ProjectCreateIn(Schema):
@@ -133,7 +139,8 @@ class ProjectUpdateIn(Schema):
     genre: str | None = None
     systems: dict[str, Any] | None = None
     hud_layout: dict[str, Any] | None = None
-    state_schema: dict[str, Any] | None = None 
+    state_schema: dict[str, Any] | None = None
+    character_traits: list[dict[str, Any]] | None = None
 
 
 class LevelOut(Schema):
@@ -394,6 +401,7 @@ def _character_detail(character: Character) -> dict:
         "image_key": character.image_key,
         "project_id": character.project_id,
         "related": _related_for(character),
+        "traits": character.traits or {},
     }
 
 
@@ -427,6 +435,8 @@ def update_character(request, character_id: int, payload: CharacterUpdateIn):
         character.name = data["name"]
     if "description" in data and data["description"] is not None:
         character.description = data["description"]
+    if "traits" in data and data["traits"] is not None:
+        character.traits = data["traits"]
     character.save()
     return _character_detail(character)
 
@@ -559,6 +569,8 @@ def update_project(request, project_id: int, payload: ProjectUpdateIn):
         project.hud_layout = data["hud_layout"]
     if "state_schema" in data and data["state_schema"] is not None:
         project.state_schema = data["state_schema"]
+    if "character_traits" in data and data["character_traits"] is not None:
+        project.character_traits = data["character_traits"]
     project.save()
     return project
 

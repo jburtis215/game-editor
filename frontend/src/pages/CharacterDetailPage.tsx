@@ -1,6 +1,16 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api, API_BASE, type Character, type CharacterDetail } from '../api/client';
+import {
+  normalizeCharacterTraits,
+  normalizeTraitDefs,
+  resolveTraits,
+  type CharacterTraits,
+  type TraitDef,
+  type TraitValue,
+} from '../lib/characterTraits';
+import TraitControl from '../components/traits/TraitControl';
+import TraitPicker from '../components/traits/TraitPicker';
 import './CharacterDetail.css';
 
 export default function CharacterDetailPage() {
@@ -25,6 +35,15 @@ export default function CharacterDetailPage() {
   const [imgError, setImgError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
+  // Traits: the project's defaults are overlaid live over this character's own values.
+  const [projectTraits, setProjectTraits] = useState<TraitDef[]>([]);
+  const [traits, setTraits] = useState<CharacterTraits>({ values: {}, own: [] });
+  // JSON of the traits we know the server already has — stops the debounce below from
+  // re-saving what we just loaded (or just saved).
+  const savedTraits = useRef('');
+
+  // Traits mutate continuously (sliders), so they save on their own debounce rather than via the
+  // identity Save button. The backend PATCH is partial, so sending only `traits` is safe.
   const applyDetail = useCallback((d: CharacterDetail) => {
     setDetail(d);
     setName(d.name);
@@ -38,12 +57,34 @@ export default function CharacterDetailPage() {
         if (error || !data) return setError('Failed to load character');
         setError(null);
         applyDetail(data);
+        const loaded = normalizeCharacterTraits(data.traits);
+        savedTraits.current = JSON.stringify(loaded);
+        setTraits(loaded);
       });
   }, [id, applyDetail]);
 
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    const json = JSON.stringify(traits);
+    if (json === savedTraits.current) return;
+    const t = setTimeout(() => {
+      savedTraits.current = json;
+      void api
+        .PATCH('/api/characters/{character_id}', {
+          params: { path: { character_id: id } },
+          body: { traits },
+        })
+        .then(({ data, error }) => {
+          if (error || !data) return setError('Failed to save traits');
+          setError(null);
+          setDetail(data);
+        });
+    }, 400);
+    return () => clearTimeout(t);
+  }, [traits, id]);
 
   // The project's other characters power the relationship dropdown.
   useEffect(() => {
@@ -52,6 +93,48 @@ export default function CharacterDetailPage() {
       .GET('/api/characters', { params: { query: { project_id: Number(projectId) } } })
       .then(({ data }) => data && setOthers(data.filter((c) => c.id !== id)));
   }, [projectId, id]);
+
+  // The project's default traits — this page is outside the tab layout, so there's no useProject().
+  useEffect(() => {
+    if (!projectId) return;
+    api
+      .GET('/api/projects/{project_id}', { params: { path: { project_id: Number(projectId) } } })
+      .then(({ data }) => data && setProjectTraits(normalizeTraitDefs(data.character_traits)));
+  }, [projectId]);
+
+  const resolvedTraits = useMemo(
+    () => resolveTraits(projectTraits, traits),
+    [projectTraits, traits],
+  );
+
+  function setTraitValue(key: string, value: TraitValue) {
+    setTraits((prev) => ({ ...prev, values: { ...prev.values, [key]: value } }));
+  }
+
+  /** Drop the character's override so the trait falls back to the project's default value. */
+  function resetTraitValue(key: string) {
+    setTraits((prev) => {
+      const values = { ...prev.values };
+      delete values[key];
+      return { ...prev, values };
+    });
+  }
+
+  function removeOwnTrait(key: string) {
+    setTraits((prev) => {
+      const values = { ...prev.values };
+      delete values[key];
+      return { values, own: prev.own.filter((t) => t.key !== key) };
+    });
+  }
+
+  function addOwnTrait(def: TraitDef) {
+    setTraits((prev) =>
+      prev.own.some((t) => t.key === def.key)
+        ? prev
+        : { values: { ...prev.values, [def.key]: def.default }, own: [...prev.own, def] },
+    );
+  }
 
   async function saveIdentity() {
     const { data, error } = await api.PATCH('/api/characters/{character_id}', {
@@ -285,10 +368,62 @@ export default function CharacterDetailPage() {
             </form>
           </section>
 
-          {/* TODO: technical details about the character (stats, model refs, etc.). */}
-          <section className="char-section char-section--soon" aria-disabled="true">
-            <h2 className="char-section__title">Technical details</h2>
-            <p className="char-section__soon">🚧 Coming soon — engine stats, asset refs, and tuning.</p>
+          <section className="char-section">
+            <h2 className="char-section__title">Traits</h2>
+            <p className="char-section__hint">
+              Traits marked <em>default</em> come from the project's{' '}
+              <Link to={`/projects/${projectId}/settings`}>Settings</Link> and apply to every
+              character — change the value here to override it just for {name || 'this character'}.
+              Traits added below belong to this character alone.
+            </p>
+
+            {resolvedTraits.length === 0 ? (
+              <p className="char-section__empty">
+                No traits yet. Add one below, or set project-wide defaults in Settings.
+              </p>
+            ) : (
+              <div className="trait-list">
+                {resolvedTraits.map((t) => (
+                  <TraitControl
+                    key={t.def.key}
+                    def={t.def}
+                    value={t.value}
+                    badge={t.source === 'project' ? 'default' : undefined}
+                    onChange={(v) => setTraitValue(t.def.key, v)}
+                    actions={
+                      t.source === 'project' ? (
+                        <button
+                          type="button"
+                          className="trait-row__action"
+                          aria-label={`Reset ${t.def.label} to the project default`}
+                          title="Reset to the project default"
+                          disabled={!t.overridden}
+                          onClick={() => resetTraitValue(t.def.key)}
+                        >
+                          ↺
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          className="trait-row__action"
+                          aria-label={`Remove ${t.def.label}`}
+                          title="Remove this trait"
+                          onClick={() => removeOwnTrait(t.def.key)}
+                        >
+                          ✕
+                        </button>
+                      )
+                    }
+                  />
+                ))}
+              </div>
+            )}
+
+            <TraitPicker
+              taken={resolvedTraits.map((t) => t.def.key)}
+              hint="Add a trait only this character has."
+              onAdd={addOwnTrait}
+            />
           </section>
         </>
       )}

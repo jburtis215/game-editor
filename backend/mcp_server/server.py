@@ -28,6 +28,12 @@ mcp = FastMCP(
     ),
 )
 
+
+def _slug(value: str) -> str:
+    """Snake_case a label into a stable key. Mirrors `traitKey()` in the frontend."""
+    return re.sub(r"[^a-z0-9]+", "_", (value or "").lower()).strip("_") or "state"
+
+
 # --- Projects ---------------------------------------------------------------------------------
 @mcp.tool()
 async def list_projects() -> list[dict[str, Any]]:
@@ -156,7 +162,11 @@ async def list_characters(project_id: int | None = None) -> list[dict[str, Any]]
 
 @mcp.tool()
 async def get_character(character_id: int) -> dict[str, Any]:
-    """Get a character: description, portrait URL, and outgoing relationships."""
+    """Get a character: description, portrait URL, outgoing relationships, and raw traits.
+
+    `traits` here is only what this character stores; use get_character_traits for the effective
+    list with the project's defaults overlaid.
+    """
     return await client.get(f"/characters/{character_id}")
 
 
@@ -206,12 +216,164 @@ async def generate_character_portrait(
     return await client.post(f"/characters/{character_id}/generate-image", prompt=prompt)
 
 
+# --- Character traits -------------------------------------------------------------------------
+# A trait is a named, typed slot on a character: number (Power = 75), text (Species = "Elf") or
+# toggle (Can fly = true). The project holds a list of *default* trait definitions applied to every
+# character; a character stores {"values": {key: value}, "own": [definition, ...]} — an override of
+# a default, or a trait only it has. Defaults are overlaid live, so removing one from the project
+# removes it everywhere. These tools compose GET + PATCH so the agent never hand-assembles the JSON.
+TRAIT_TYPES = ("number", "text", "toggle")
+
+
+def _trait_def(
+    label: str,
+    type: str,
+    key: str | None = None,
+    min: float = 0,
+    max: float = 100,
+    unit: str = "",
+    default: Any = None,
+) -> dict[str, Any]:
+    if type not in TRAIT_TYPES:
+        raise ValueError(f"type must be one of {', '.join(TRAIT_TYPES)}")
+    definition: dict[str, Any] = {"key": key or _slug(label), "label": label, "type": type}
+    if type == "number":
+        definition.update(
+            {"min": min, "max": max, "step": 1, "unit": unit, "default": min if default is None else default}
+        )
+    else:
+        definition["default"] = (False if type == "toggle" else "") if default is None else default
+    return definition
+
+
+@mcp.tool()
+async def list_project_character_traits(project_id: int) -> list[dict[str, Any]]:
+    """The project's default character traits — the ones every character in it has."""
+    project = await client.get(f"/projects/{project_id}")
+    return list(project.get("character_traits") or [])
+
+
+@mcp.tool()
+async def add_project_character_trait(
+    project_id: int,
+    label: str,
+    type: str = "number",
+    min: float = 0,
+    max: float = 100,
+    unit: str = "",
+    default: Any = None,
+) -> dict[str, Any]:
+    """Add a default trait to a project — every character in it gains this trait.
+
+    `type` is number | text | toggle. `min`/`max`/`unit` apply to numbers only (a 0–100 stat is
+    the usual shape). Omit `default` to start at `min` / "" / false. Re-adding an existing key
+    replaces its definition. Returns the trait definition, including the generated `key` that
+    set_character_trait takes.
+    """
+    definition = _trait_def(label, type, min=min, max=max, unit=unit, default=default)
+    project = await client.get(f"/projects/{project_id}")
+    traits = [t for t in (project.get("character_traits") or []) if t.get("key") != definition["key"]]
+    traits.append(definition)
+    await client.patch(f"/projects/{project_id}", character_traits=traits)
+    return definition
+
+
+@mcp.tool()
+async def remove_project_character_trait(project_id: int, key: str) -> list[dict[str, Any]]:
+    """Remove a default trait from a project. It disappears from every character immediately.
+
+    Values characters had set for it are left behind harmlessly and ignored. Returns the
+    remaining default traits.
+    """
+    project = await client.get(f"/projects/{project_id}")
+    traits = [t for t in (project.get("character_traits") or []) if t.get("key") != key]
+    await client.patch(f"/projects/{project_id}", character_traits=traits)
+    return traits
+
+
+@mcp.tool()
+async def get_character_traits(character_id: int) -> list[dict[str, Any]]:
+    """A character's effective traits: the project's defaults overlaid with this character's own.
+
+    Each entry has the trait's definition plus `value` (the character's value, or the default it
+    falls back to) and `source` — "project" for a project default, "own" for a trait only this
+    character has.
+    """
+    character = await client.get(f"/characters/{character_id}")
+    defaults: list[dict[str, Any]] = []
+    if character.get("project_id"):
+        project = await client.get(f"/projects/{character['project_id']}")
+        defaults = list(project.get("character_traits") or [])
+    stored = character.get("traits") or {}
+    values = stored.get("values") or {}
+
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for source, defs in (("project", defaults), ("own", stored.get("own") or [])):
+        for definition in defs:
+            key = definition.get("key")
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            out.append(
+                {**definition, "value": values.get(key, definition.get("default")), "source": source}
+            )
+    return out
+
+
+@mcp.tool()
+async def set_character_trait(
+    character_id: int,
+    key: str,
+    value: Any,
+    label: str | None = None,
+    type: str = "number",
+    min: float = 0,
+    max: float = 100,
+) -> list[dict[str, Any]]:
+    """Set one character's value for a trait, e.g. set Power to 75 on a character.
+
+    `key` is a trait key from get_character_traits or add_project_character_trait. If it matches
+    no existing trait, one is created *for this character only* — pass `label` (and `type` /
+    `min` / `max` for a number) to define it; without a label the key is used as the label.
+    To give the trait to every character instead, use add_project_character_trait.
+    Returns the character's effective traits afterwards.
+    """
+    character = await client.get(f"/characters/{character_id}")
+    stored = character.get("traits") or {}
+    own = list(stored.get("own") or [])
+    values = dict(stored.get("values") or {})
+
+    known = {t.get("key") for t in own}
+    if character.get("project_id"):
+        project = await client.get(f"/projects/{character['project_id']}")
+        known |= {t.get("key") for t in (project.get("character_traits") or [])}
+    if key not in known:
+        own.append(_trait_def(label or key, type, key=key, min=min, max=max, default=value))
+
+    values[key] = value
+    await client.patch(f"/characters/{character_id}", traits={"values": values, "own": own})
+    return await get_character_traits(character_id)
+
+
+@mcp.tool()
+async def remove_character_trait(character_id: int, key: str) -> list[dict[str, Any]]:
+    """Remove a trait from one character.
+
+    A trait the character added itself is deleted outright. For a project default, this only
+    clears the character's value so it falls back to the project's default — use
+    remove_project_character_trait to drop it from everyone. Returns the effective traits after.
+    """
+    character = await client.get(f"/characters/{character_id}")
+    stored = character.get("traits") or {}
+    own = [t for t in (stored.get("own") or []) if t.get("key") != key]
+    values = {k: v for k, v in (stored.get("values") or {}).items() if k != key}
+    await client.patch(f"/characters/{character_id}", traits={"values": values, "own": own})
+    return await get_character_traits(character_id)
+
+
 # --- Story state ------------------------------------------------------------------------------
 STATE_PREFIXES = {"flag": "flag", "remembered_choice": "choice", "item": "item", "stat": "stat"}
-
-
-def _slug(value: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "_", (value or "").lower()).strip("_") or "state"
 
 
 @mcp.tool()

@@ -37,7 +37,8 @@ module declarations for CSS/asset imports — keep it.
   add + inline rename). Clicking a project opens `/projects/:projectId` = `ProjectHomePage`, a
   **layout route with a tab bar** (Settings · Systems · Levels · Characters · Preview) that
   renders an `<Outlet/>`; the index redirects to `settings`. Tab child routes:
-  `settings` = `ProjectSettingsPage` (dimension + genre), `systems` = `ProjectSystemsPage`
+  `settings` = `ProjectSettingsPage` (dimension + genre + default character traits),
+  `systems` = `ProjectSystemsPage`
   (game-system architect + blueprint), `preview` = `ProjectPreviewPage` (draggable retro HUD),
   `levels` = `LevelsPage` (project-scoped list), `characters` = `CharactersPage` (project-scoped
   list + create). Drilling in is a **full page outside the tab layout**:
@@ -46,7 +47,7 @@ module declarations for CSS/asset imports — keep it.
   `/projects/:projectId/levels/:levelId/characters` = `LevelCharactersPage` (the level's cast,
   **deduced from dialogue speakers**, each with their lines + an Actions TODO stub), and
   `/projects/:projectId/characters/:characterId` = `CharacterDetailPage` (edit name/description,
-  manage relationships, plus a TODO "Technical details" stub). `/shapes` = `ShapeEditorPage`
+  manage relationships, edit traits). `/shapes` = `ShapeEditorPage`
   (route kept; no nav). **Characters are per-project** — there is no global `/characters` route or
   nav item.
 - **Characters** (`pages/CharactersPage.tsx` + `CharacterDetailPage.tsx`): the list is a card grid
@@ -55,6 +56,20 @@ module declarations for CSS/asset imports — keep it.
   **Relationships are directed (unidirectional)**: adding one (`POST …/relationships`) creates an
   edge from this character to the target and shows only on this character's page; the reverse is a
   separate edge. Remove via `DELETE …/relationships/{id}`.
+- **Character traits** (`src/lib/characterTraits.ts` + `components/traits/`): a trait is a named,
+  typed slot — `number` (Power = 75), `text` (Species = "Elf") or `toggle` (Can fly ✓). The
+  **Settings tab** picks the project's *default* traits (`Project.character_traits`), which are
+  **overlaid live** onto every character at render time — removing one there removes it from every
+  character instantly, no backfill. `CharacterDetailPage` shows the resolved list
+  (`resolveTraits()`): project defaults badged `default` with a ↺ that drops the character's
+  override, plus traits only that character has (added via `TraitPicker`, removable). Unlike
+  `gameSystems.ts` (definitions in code, answers in JSON), a trait's **full definition is
+  persisted** — traits can be custom, so no code catalog could describe them; `TRAIT_CATALOG`
+  (~55 traits over 7 categories) is only a picker source, and editing it never invalidates saved
+  data. `normalizeTraitDefs()`/`normalizeCharacterTraits()` coerce the loose JSON, so **the backend
+  does no trait validation**. Both pages debounce saves (~400ms) because the number control is a
+  slider; `CharacterDetailPage` is outside the tab layout so it has no `useProject()` — it fetches
+  `GET /api/projects/{id}` itself for the defaults.
 - `ProjectHomePage` fetches the project and passes `{ project, patchProject }` to its tabs via
   **`useOutletContext`** (`useProject()` helper). `patchProject(partial)` does an optimistic
   `PATCH /api/projects/{id}`; the Systems/Preview tabs keep a local working copy and **debounce**
@@ -112,7 +127,8 @@ module declarations for CSS/asset imports — keep it.
     by the frontend. Don't wire it up or change its status without a reason.
   - `GET /api/projects`, `POST /api/projects` (create; auto-appends `order`), `GET /api/projects/{id}`,
     `PATCH /api/projects/{id}` — the **Project** (top-level game). One PATCH serves rename,
-    Settings (`dimension`/`genre`), Systems (`systems` JSON), and Preview (`hud_layout` JSON).
+    Settings (`dimension`/`genre` + `character_traits` JSON), Systems (`systems` JSON), and
+    Preview (`hud_layout` JSON).
   - `GET /api/levels` (optional `?project_id=` filter), `POST /api/levels` (create; auto-appends
     `order`, takes `project_id`), `GET /api/levels/{id}`, `PATCH /api/levels/{id}` (rename) — the
     project's Levels list + per-level hub. `GET /api/levels/{id}/characters` returns the level's
@@ -120,7 +136,10 @@ module declarations for CSS/asset imports — keep it.
     each with the lines they speak — powers `LevelCharactersPage`.
   - **Characters** (per-project): `GET /api/characters` (optional `?project_id=` filter),
     `POST /api/characters` (create; name/description/project_id), `GET /api/characters/{id}`
-    (detail = description + `related` list), `PATCH /api/characters/{id}` (name/description).
+    (detail = description + `related` list + `traits`), `PATCH /api/characters/{id}`
+    (name/description/`traits`). No trait endpoints of their own — traits ride on these two
+    PATCHes, and the API stores their JSON verbatim (validation lives in the frontend's
+    `characterTraits.ts`, like `systems`).
     **Directed relationships**: `POST /api/characters/{id}/relationships` (`other_id`+`relationship`;
     creates a `from→to` edge, upserts on that ordered pair, validates same-project/no-self),
     `DELETE /api/characters/{id}/relationships/{rel_id}`.
@@ -177,7 +196,7 @@ module declarations for CSS/asset imports — keep it.
   variable twice across multiple `.yarn` files loaded into one Yarn Spinner project is a compile
   error; add declares by hand (or export project variables once, if that's built later).
 - `api/models.py`: `Project → Level → Scene` (FKs), `Character` (now `project` FK + `description`
-  + `image_key`; `Scene ↔ Character` M2M), `CharacterRelationship` (directed labeled edge
+  + `image_key` + `traits` JSONB; `Scene ↔ Character` M2M), `CharacterRelationship` (directed labeled edge
   `from_character → to_character` with a `uniq_char_relationship` unique constraint; a character's
   outgoing links are `relationships_out`), and `Dialogue` — a node in a branching dialogue
   **graph** (`scene` FK, `character` FK, `text`, plus `requirements`/`effects` JSONB lists of typed
@@ -193,10 +212,16 @@ module declarations for CSS/asset imports — keep it.
   node can be reached from more than one place (reuse/reconvergence) or form a loop; a scene's
   roots are nodes with no `incoming_edges`.
   **`Project`** is the top-level game container: `name`/`order` plus first-class `dimension` and
-  `genre` columns, and two **JSONB** fields — `systems` (the per-system enabled+answers, shape
-  defined by `gameSystems.ts`) and `hud_layout` (`{systemId: {x,y}}`). Hybrid on purpose: the
+  `genre` columns, and **JSONB** fields — `systems` (the per-system enabled+answers, shape
+  defined by `gameSystems.ts`), `hud_layout` (`{systemId: {x,y}}`), and `character_traits` (the
+  project's default character traits: a list of `{key,label,type,min,max,step,unit,default}`
+  definitions). Hybrid on purpose: the
   evolving question set stays in frontend code, so its *answers* live in JSON to avoid a migration
-  per question; only stable `dimension`/`genre` are columns. `User` holds per-user settings
+  per question; only stable `dimension`/`genre` are columns. Traits go one step further and store
+  the *definition* too, since traits can be user-invented (see the frontend Character-traits
+  bullet). `Character.traits` is the matching per-character half:
+  `{"values": {key: value}, "own": [definition, …]}` — an override of a project default, or a
+  trait only that character has. `User` holds per-user settings
   (currently `theme`); no auth yet, so a single default user.
 - Database: Postgres via `DATABASES['default']` (psycopg 3), params from `POSTGRES_*` env vars
   (defaults target the local `game_editor` db/role). Migrations **are** applied; seed demo
@@ -211,16 +236,20 @@ An **MCP** server exposing the API as tools for an AI game-creation agent (`pyth
 stdio; see its README for client wiring). It's a **client of the REST API over HTTP**, not a Django
 app — `client.py` is a thin httpx wrapper (`GAME_EDITOR_API_URL`, default
 `http://127.0.0.1:8000/api`), so tools can't bypass endpoint validation and the backend must be
-running. `server.py` holds a `FastMCP` instance with ~28 read/create/update tools mirroring the
-hierarchy (projects · levels · locations · scenes · characters · story state · dialogue, incl.
-`import_scene_yarn`/`export_scene_yarn`), three resources (`game-editor://projects`,
+running. `server.py` holds a `FastMCP` instance with ~34 read/create/update tools mirroring the
+hierarchy (projects · levels · locations · scenes · characters · character traits · story state ·
+dialogue, incl. `import_scene_yarn`/`export_scene_yarn`), three resources (`game-editor://projects`,
 `…/projects/{id}` = project+levels+scenes+characters, `…/scenes/{id}/yarn`) and a `build-game`
 prompt. **Tool docstrings are the agent-facing docs** — the requirement/effect vocabulary spelled
 out in `create_dialogue` must stay in sync with `DialogueRequirement`/`DialogueEffect` in
 `frontend/src/api/client.ts` (every entry keys off `state_key`; `change_stat` uses `amount`).
-`register_state_variable` is the one tool that composes instead of proxying (GET + PATCH of
-`project.state_schema`, using the UI's `flag_`/`choice_`/`item_`/`stat_` key convention) so
-agent-written keys still render labeled in the editor. No delete tools are exposed on purpose.
+`register_state_variable` and the six `*_character_trait(s)` tools compose instead of proxying
+(GET + PATCH of `project.state_schema` / `project.character_traits` / `character.traits`) so the
+agent never hand-assembles those JSON blobs: `register_state_variable` uses the UI's
+`flag_`/`choice_`/`item_`/`stat_` key convention, and the trait tools share the frontend's
+`traitKey()` slug rule via `_slug()` and do the project-defaults overlay in
+`get_character_traits`. No delete tools are exposed on purpose (the two `remove_*_trait` tools
+clear fields, not rows).
 
 ## Conventions
 

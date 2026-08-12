@@ -1,0 +1,292 @@
+/* Character traits — shared by the Settings tab (default traits) and the character detail page. */
+
+.trait-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  max-width: 760px;
+  margin-bottom: 1.25rem;
+}
+
+/* ---------------- One trait row ---------------- */
+.trait-row {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: linear-gradient(180deg, var(--bg-1), var(--bg-2));
+  padding: 0.7rem 0.85rem;
+}
+
+.trait-row__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+
+.trait-row__label {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.88rem;
+  color: var(--text);
+}
+
+.trait-row__badge {
+  font-family: var(--font-display);
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 0.12rem 0.4rem;
+  border-radius: 999px;
+  color: var(--green-soft);
+  border: 1px solid color-mix(in srgb, var(--green) 40%, transparent);
+  background: color-mix(in srgb, var(--green) 10%, transparent);
+}
+
+.trait-row__tail {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.trait-row__value {
+  font-family: var(--font-display);
+  font-size: 0.72rem;
+  color: var(--green-soft);
+  min-width: 3.5rem;
+  text-align: right;
+}
+
+.trait-row__action {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.85rem;
+  line-height: 1;
+  padding: 0.2rem 0.3rem;
+  border-radius: 6px;
+}
+
+.trait-row__action:hover:not(:disabled) {
+  color: var(--orange);
+  background: color-mix(in srgb, var(--orange) 10%, transparent);
+}
+
+.trait-row__action:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+/* Number */
+.trait-row__number {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  margin-top: 0.5rem;
+}
+
+.trait-row__slider {
+  flex: 1;
+  accent-color: var(--orange);
+}
+
+.trait-row__spin {
+  width: 5.5rem;
+  padding: 0.35rem 0.5rem;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 0.82rem;
+}
+
+/* Text */
+.trait-row__text {
+  width: 100%;
+  margin-top: 0.5rem;
+  padding: 0.5rem 0.7rem;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  color: var(--text);
+  font-size: 0.88rem;
+}
+
+.trait-row__spin:focus,
+.trait-row__text:focus {
+  outline: none;
+  border-color: var(--green);
+  box-shadow: 0 0 12px var(--green-glow);
+}
+
+/* Toggle */
+.trait-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  margin-top: 0.5rem;
+  cursor: pointer;
+  user-select: none;
+}
+
+.trait-toggle__input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.trait-toggle__track {
+  width: 40px;
+  height: 22px;
+  border-radius: 999px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  padding: 2px;
+  display: inline-flex;
+  transition:
+    background 0.12s,
+    border-color 0.12s;
+}
+
+.trait-toggle__knob {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--muted);
+  transition:
+    transform 0.12s,
+    background 0.12s;
+}
+
+.trait-toggle__input:checked + .trait-toggle__track {
+  background: color-mix(in srgb, var(--green) 25%, transparent);
+  border-color: var(--green);
+}
+
+.trait-toggle__input:checked + .trait-toggle__track .trait-toggle__knob {
+  transform: translateX(18px);
+  background: var(--green);
+}
+
+.trait-toggle__input:focus-visible + .trait-toggle__track {
+  box-shadow: 0 0 12px var(--green-glow);
+}
+
+.trait-toggle__text {
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+/* ---------------- Picker ---------------- */
+.trait-picker {
+  border: 1px dashed var(--line);
+  border-radius: 12px;
+  padding: 0.85rem;
+  max-width: 760px;
+}
+
+.trait-picker__hint {
+  margin: 0 0 0.7rem;
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.trait-picker__cats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 0.7rem;
+}
+
+.trait-picker__options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 0.75rem;
+}
+
+.trait-picker__opt {
+  padding: 0.35rem 0.7rem;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--bg-2);
+  color: var(--text);
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition:
+    border-color 0.12s,
+    background 0.12s;
+}
+
+.trait-picker__opt:hover {
+  border-color: var(--orange);
+  background: color-mix(in srgb, var(--orange) 8%, transparent);
+}
+
+.trait-picker__empty {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.trait-picker__custom {
+  border: none;
+  background: transparent;
+  color: var(--orange);
+  font-size: 0.82rem;
+  cursor: pointer;
+  padding: 0;
+}
+
+.trait-custom {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.trait-custom__label,
+.trait-custom__type,
+.trait-custom__num {
+  padding: 0.45rem 0.6rem;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  color: var(--text);
+  font-size: 0.83rem;
+}
+
+.trait-custom__label {
+  flex: 1;
+  min-width: 10rem;
+}
+
+.trait-custom__num {
+  width: 5rem;
+}
+
+.trait-custom__dash {
+  color: var(--muted);
+}
+
+.trait-custom__label:focus,
+.trait-custom__type:focus,
+.trait-custom__num:focus {
+  outline: none;
+  border-color: var(--green);
+  box-shadow: 0 0 12px var(--green-glow);
+}
+
+.trait-custom__cancel {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.trait-custom__cancel:hover {
+  color: var(--orange);
+}

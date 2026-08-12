@@ -41,6 +41,11 @@ class Project(models.Model):
     systems = models.JSONField(default=dict, blank=True)  # ArchitectState: per-system enabled+answers
     hud_layout = models.JSONField(default=dict, blank=True)  # HudLayout: {systemId: {x, y}}
     state_schema = models.JSONField(default=dict, blank=True)
+    # The project's default character traits — a list of trait *definitions* that every character
+    # in the project shows: [{key, label, type: number|text|toggle, min, max, step, unit, default}].
+    # Unlike `systems` (answers only, definitions in code), the full definition is stored because
+    # traits can be custom, so no code catalog can describe them.
+    character_traits = models.JSONField(default=list, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -81,6 +86,11 @@ class Character(models.Model):
     # "Characters/Project-1/character-2/<uuid>.png". Blank = none yet. The browser-facing URL is
     # derived from this at read time (a presigned GET URL) — see storage.view_url().
     image_key = models.CharField(max_length=500, blank=True, default="")
+    # This character's traits: {"values": {key: value}, "own": [trait definition, ...]}.
+    # `values` covers both the project's default traits (an override) and this character's own
+    # ones; `own` holds definitions for traits only this character has. The project's defaults are
+    # overlaid live at read time, so removing one there removes it everywhere.
+    traits = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

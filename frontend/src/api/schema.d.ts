@@ -598,6 +598,13 @@ export interface components {
              * @default []
              */
             related: components["schemas"]["RelatedCharacterOut"][];
+            /**
+             * Traits
+             * @default {}
+             */
+            traits: {
+                [key: string]: unknown;
+            };
         };
         /**
          * RelatedCharacterOut
@@ -622,6 +629,10 @@ export interface components {
             name?: string | null;
             /** Description */
             description?: string | null;
+            /** Traits */
+            traits?: {
+                [key: string]: unknown;
+            } | null;
         };
         /** RelationshipCreateIn */
         RelationshipCreateIn: {
@@ -674,6 +685,13 @@ export interface components {
             state_schema: {
                 [key: string]: unknown;
             };
+            /**
+             * Character Traits
+             * @default []
+             */
+            character_traits: {
+                [key: string]: unknown;
+            }[];
         };
         /** ProjectCreateIn */
         ProjectCreateIn: {
@@ -711,6 +729,10 @@ export interface components {
             state_schema?: {
                 [key: string]: unknown;
             } | null;
+            /** Character Traits */
+            character_traits?: {
+                [key: string]: unknown;
+            }[] | null;
         };
         /** LevelOut */
         LevelOut: {
