@@ -11,6 +11,10 @@ import {
 } from '../lib/gameSystems';
 import { useProject } from './ProjectHomePage';
 import SystemSim from '../components/systems/SystemSim';
+import AbilitiesPanel from '../components/systems/AbilitiesPanel';
+import type { StateSchema } from '../api/client';
+// The abilities panel reuses the dialogue editor's picker controls (MemoryComboBox et al).
+import '../components/dialogue/DialogueEditor.css';
 import './ProjectTabs.css';
 
 export default function ProjectSystemsPage() {
@@ -200,6 +204,12 @@ export default function ProjectSystemsPage() {
           <pre className="psys__manifest">{JSON.stringify(manifest, null, 2)}</pre>
         </aside>
       </div>
+
+      {/* The verb set sits below the architect: project-wide data, not one system's answers. */}
+      <AbilitiesPanel
+        projectId={project.id}
+        stateSchema={(project.state_schema ?? {}) as StateSchema}
+      />
     </div>
   );
 }

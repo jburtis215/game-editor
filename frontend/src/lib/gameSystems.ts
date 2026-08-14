@@ -260,6 +260,40 @@ export const SYSTEMS: SystemDef[] = [
       },
     ],
   },
+  {
+    id: 'controls',
+    name: 'Controls & Camera',
+    blurb: 'How the player drives, and what they see',
+    icon: '🎮',
+    components: ['InputController', 'CameraRig'],
+    questions: [
+      {
+        kind: 'single',
+        key: 'inputStyle',
+        label: 'How does the player control the game?',
+        options: [
+          { id: 'platformer', label: 'Platformer', description: 'Left/right + jump, gravity-bound' },
+          { id: 'twin-stick', label: 'Twin-stick', description: 'Move and aim independently' },
+          { id: 'point-and-click', label: 'Point and click', description: 'Cursor drives everything' },
+          { id: 'wasd-mouse', label: 'WASD + mouse', description: 'Keyboard moves, mouse aims/looks' },
+        ],
+        defaultValue: 'wasd-mouse',
+      },
+      {
+        kind: 'single',
+        key: 'camera',
+        label: 'Where is the camera?',
+        options: [
+          { id: 'side-on', label: 'Side-on', description: 'Flat side view, scrolls with the player' },
+          { id: 'top-down', label: 'Top-down', description: 'Looking down on the play space' },
+          { id: 'third-person', label: 'Follow third-person', description: 'Trails behind the character' },
+          { id: 'fixed-rooms', label: 'Fixed rooms', description: 'One framed shot per room, no scrolling' },
+        ],
+        defaultValue: 'side-on',
+      },
+      { kind: 'slider', key: 'cameraFeel', label: 'Camera feel (locked → loose follow)', min: 0, max: 100, step: 5, unit: '% loose', defaultValue: 40 },
+    ],
+  },
 ];
 
 /** Always-present components on every character (shown as the "foundation" base). */
@@ -299,16 +333,40 @@ function defaultValues(sys: SystemDef): Record<string, string | string[] | numbe
 export function initialState(): ArchitectState {
   const out: ArchitectState = {};
   for (const s of SYSTEMS) {
-    out[s.id] = { enabled: ['health', 'inventory', 'stamina'].includes(s.id), values: defaultValues(s) };
+    out[s.id] = {
+      enabled: ['health', 'inventory', 'stamina', 'controls'].includes(s.id),
+      values: defaultValues(s),
+    };
   }
   return out;
 }
 
-/** Initial state tuned to a genre (which systems start enabled). */
+/**
+ * Per-genre answers for the Controls & Camera system — the 3Cs vary more by genre than
+ * any other system, so a genre pick should seed them rather than leave a generic default.
+ */
+const CONTROL_DEFAULTS: Record<string, { inputStyle: string; camera: string; cameraFeel: number }> = {
+  rpg: { inputStyle: 'wasd-mouse', camera: 'top-down', cameraFeel: 55 },
+  platformer: { inputStyle: 'platformer', camera: 'side-on', cameraFeel: 35 },
+  shooter: { inputStyle: 'twin-stick', camera: 'top-down', cameraFeel: 45 },
+  puzzle: { inputStyle: 'point-and-click', camera: 'fixed-rooms', cameraFeel: 0 },
+  social: { inputStyle: 'wasd-mouse', camera: 'third-person', cameraFeel: 65 },
+  card: { inputStyle: 'point-and-click', camera: 'fixed-rooms', cameraFeel: 0 },
+  strategy: { inputStyle: 'point-and-click', camera: 'top-down', cameraFeel: 25 },
+  racing: { inputStyle: 'wasd-mouse', camera: 'third-person', cameraFeel: 80 },
+  survival: { inputStyle: 'wasd-mouse', camera: 'third-person', cameraFeel: 60 },
+  horror: { inputStyle: 'wasd-mouse', camera: 'fixed-rooms', cameraFeel: 15 },
+  sandbox: { inputStyle: 'wasd-mouse', camera: 'third-person', cameraFeel: 70 },
+  fighting: { inputStyle: 'platformer', camera: 'side-on', cameraFeel: 10 },
+  rhythm: { inputStyle: 'point-and-click', camera: 'fixed-rooms', cameraFeel: 0 },
+};
+
+/** Initial state tuned to a genre (which systems start enabled + their genre-specific answers). */
 export function genreDefaults(genre: string): ArchitectState {
   const base = initialState();
   const enable = (ids: string[]) => {
-    for (const id of Object.keys(base)) base[id].enabled = ids.includes(id);
+    // Controls & Camera is the 3Cs foundation — every genre needs it, so it stays on.
+    for (const id of Object.keys(base)) base[id].enabled = id === 'controls' || ids.includes(id);
   };
   switch (genre) {
     case 'rpg': enable(['health', 'stamina', 'movement', 'magic', 'inventory', 'combat', 'dialogue']); break;
@@ -324,6 +382,8 @@ export function genreDefaults(genre: string): ArchitectState {
     case 'sandbox': enable(['health', 'stamina', 'movement', 'inventory', 'combat']); break;
     case 'fighting': enable(['health', 'stamina', 'movement', 'combat']); break;
   }
+  const controls = CONTROL_DEFAULTS[genre];
+  if (controls) base.controls.values = { ...base.controls.values, ...controls };
   return base;
 }
 

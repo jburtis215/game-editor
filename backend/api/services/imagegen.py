@@ -89,3 +89,26 @@ def default_prompt(name: str, description: str) -> str:
         f"{base}, painterly RPG concept art, dramatic rim lighting, "
         "centered bust, neutral background, highly detailed"
     )
+
+
+def default_location_prompt(
+    name: str, description: str, *, mood: str = "", kind: str = "", scale: str = ""
+) -> str:
+    """A default prompt for a location's reference image, built from its detail fields.
+
+    The location half of `default_prompt` — same style layer so places and characters read
+    as one game. `mood`/`kind`/`scale` are the Locations page's detail fields; each is
+    optional and simply dropped when unset.
+    """
+    base = f"environment concept art of {name}" if name else "environment concept art"
+    qualifiers = ", ".join(part for part in (kind, f"{scale} space" if scale else "") if part)
+    if qualifiers:
+        base += f", {qualifiers}"
+    if description:
+        base += f", {description}"
+    if mood:
+        base += f", mood: {mood}"
+    return (
+        f"{base}, painterly RPG concept art, establishing wide shot, "
+        "atmospheric lighting, no characters, highly detailed"
+    )

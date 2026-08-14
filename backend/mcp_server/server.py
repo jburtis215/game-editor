@@ -86,6 +86,77 @@ async def update_project(
     )
 
 
+# --- Abilities (the player's verb set) --------------------------------------------------------
+@mcp.tool()
+async def list_abilities(project_id: int | None = None) -> list[dict[str, Any]]:
+    """List a project's abilities — everything the player can *do*.
+
+    Each row carries `name`, `description` (behavior intent), `params` (the knobs that tune
+    it) and `unlock_requirements` (empty = available from the start). Read this before
+    building anything the player controls: the systems answers tune numbers, but this list
+    is the verb set those numbers apply to.
+    """
+    return await client.get("/abilities", project_id=project_id)
+
+
+@mcp.tool()
+async def create_ability(
+    project_id: int,
+    name: str,
+    description: str = "",
+    params: dict[str, Any] | None = None,
+    unlock_requirements: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Create a player ability — one verb in the game's vocabulary ("Dash", "Double Jump").
+
+    `description` is plain-language behavior intent, not code: "short burst forward, brief
+    invulnerability". `params` is a free-form {key: number|string|bool} bag of the knobs
+    that matter for this verb — {"cooldown": 1.5, "distance": 3, "uses": 2}; invent the
+    keys the verb actually needs rather than forcing a fixed set.
+
+    `unlock_requirements` gates when the player gets it, using the *same* bounded vocabulary
+    as dialogue requirements (all must pass for the ability to be available):
+        {"type": "state_equals", "state_key": "flag_met_mentor", "value": true}
+        {"type": "stat_check", "state_key": "stat_strength", "op": "at_least|less_than|equals",
+         "value": 3}
+        {"type": "has_item", "state_key": "item_gauntlet"}
+    Register each `state_key` with register_state_variable first. Leave the list empty for
+    an ability the player starts with — that is the common case; gate only the abilities
+    that are meant to be earned (ability gating is lock-and-key design's mechanic half, so
+    plan the key before the verb it grants).
+    """
+    return await client.post(
+        "/abilities",
+        project_id=project_id,
+        name=name,
+        description=description,
+        params=params or {},
+        unlock_requirements=unlock_requirements or [],
+    )
+
+
+@mcp.tool()
+async def update_ability(
+    ability_id: int,
+    name: str | None = None,
+    description: str | None = None,
+    params: dict[str, Any] | None = None,
+    unlock_requirements: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Update an ability. Omitted fields are left unchanged; `params` and
+    `unlock_requirements` each replace the whole value, so read the ability first and merge.
+
+    Same vocabularies as create_ability.
+    """
+    return await client.patch(
+        f"/abilities/{ability_id}",
+        name=name,
+        description=description,
+        params=params,
+        unlock_requirements=unlock_requirements,
+    )
+
+
 # --- Levels & locations -----------------------------------------------------------------------
 @mcp.tool()
 async def list_levels(project_id: int | None = None) -> list[dict[str, Any]]:
@@ -114,18 +185,104 @@ async def list_level_cast(level_id: int) -> list[dict[str, Any]]:
 
 @mcp.tool()
 async def list_locations(level_id: int | None = None) -> list[dict[str, Any]]:
-    """List locations (places within a level), optionally filtered to one level. Each includes
-    the characters placed there."""
+    """List locations (places within a level), optionally filtered to one level.
+
+    Each row carries the whole place: its detail fields (`kind`, `scale`, `mood`, `props`),
+    the characters placed there, a reference `image_url`, and `connections` — its exits.
+    Each connection is described relative to the row it appears on: `other_id`/`other_name`
+    is the place at the far end, `direction` is "out" (authored here) or "in" (a
+    bidirectional exit authored from the other side), and `requirements` is the lock on it.
+    Read this before inventing a world's shape — the connections *are* the map.
+    """
     return await client.get("/locations", level_id=level_id)
 
 
 @mcp.tool()
 async def create_location(
-    level_id: int, name: str = "New Location", description: str = ""
+    level_id: int,
+    name: str = "New Location",
+    description: str = "",
+    kind: str = "",
+    scale: str = "",
+    mood: str = "",
+    props: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Create a location in a level — a place scenes can happen at and characters can stand in."""
+    """Create a location in a level — a place scenes can happen at and characters can stand in.
+
+    Fill in the detail fields rather than leaving them for later; they are what a builder
+    would otherwise have to invent.
+    kind: "interior" | "exterior" | "" (unset).
+    scale: "cramped" | "room" | "open" | "vast" | "" (unset).
+    mood: free text — "smoky, candle-lit, too quiet".
+    props: the things in the place — ["bar counter", "trapdoor behind the barrels"].
+    """
     return await client.post(
-        "/locations", level_id=level_id, name=name, description=description
+        "/locations",
+        level_id=level_id,
+        name=name,
+        description=description,
+        kind=kind,
+        scale=scale,
+        mood=mood,
+        props=props or [],
+    )
+
+
+@mcp.tool()
+async def update_location(
+    location_id: int,
+    name: str | None = None,
+    description: str | None = None,
+    kind: str | None = None,
+    scale: str | None = None,
+    mood: str | None = None,
+    props: list[str] | None = None,
+) -> dict[str, Any]:
+    """Update a location. Omitted fields are left unchanged; `props` replaces the whole list.
+
+    Same field vocabulary as create_location (kind: interior|exterior; scale:
+    cramped|room|open|vast) — this is how you flesh out a place that already exists.
+    """
+    return await client.patch(
+        f"/locations/{location_id}",
+        name=name,
+        description=description,
+        kind=kind,
+        scale=scale,
+        mood=mood,
+        props=props,
+    )
+
+
+@mcp.tool()
+async def connect_locations(
+    from_location_id: int,
+    to_location_id: int,
+    label: str = "",
+    bidirectional: bool = True,
+    requirements: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Connect two locations in the same level — a labeled exit in the world graph.
+
+    `label` names the way through ("cellar door", "the rope bridge"). `bidirectional`
+    (default) means it is walkable both ways and so appears on both locations; set it False
+    for a one-way drop. `requirements` locks the passage, using the *same* bounded
+    vocabulary as dialogue requirements (all must pass for the exit to be usable):
+        {"type": "state_equals", "state_key": "flag_alarm_raised", "value": true}
+        {"type": "stat_check", "state_key": "stat_strength", "op": "at_least|less_than|equals",
+         "value": 3}
+        {"type": "has_item", "state_key": "item_cellar_key"}
+    Register each `state_key` with register_state_variable first. Gated connections are
+    lock-and-key design: the world's shape is the progression, so plan the keys before the
+    doors. Re-connecting the same ordered pair updates that connection instead of adding a
+    second one. Returns the updated `from` location, including its connections.
+    """
+    return await client.post(
+        f"/locations/{from_location_id}/connections",
+        to_id=to_location_id,
+        label=label,
+        bidirectional=bidirectional,
+        requirements=requirements or [],
     )
 
 
@@ -133,6 +290,18 @@ async def create_location(
 async def place_character_at_location(location_id: int, character_id: int) -> dict[str, Any]:
     """Put a character at a location. The character must belong to the level's project."""
     return await client.post(f"/locations/{location_id}/characters", character_id=character_id)
+
+
+@mcp.tool()
+async def generate_location_art(location_id: int, prompt: str | None = None) -> dict[str, Any]:
+    """Generate a reference image for a location with FLUX and attach it.
+
+    Omit `prompt` to build one from the location's name, description, kind/scale and mood —
+    so filling those in first gives a better image. Takes several seconds. Returns 503
+    ("not configured") when the FAL/AWS credentials aren't set — that's an environment
+    issue, not something to retry.
+    """
+    return await client.post(f"/locations/{location_id}/generate-image", prompt=prompt)
 
 
 # --- Scenes -----------------------------------------------------------------------------------

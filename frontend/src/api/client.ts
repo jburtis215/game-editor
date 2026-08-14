@@ -18,6 +18,10 @@ export type LevelCharacter = components['schemas']['LevelCharacterOut'];
 export type Project = components['schemas']['ProjectOut'];
 export type Level = components['schemas']['LevelOut'];
 export type Location = components['schemas']['LocationOut'];
+/** An exit out of a location, described relative to the location it's listed on. */
+export type LocationConnection = components['schemas']['LocationConnectionOut'];
+/** One verb in the player's vocabulary — what the player can do (Dash, Double Jump). */
+export type Ability = components['schemas']['AbilityOut'];
 export type Scene = components['schemas']['SceneOut'];
 export type DialogueSummary = components['schemas']['DialogueSummaryOut'];
 export type DialogueDetail = components['schemas']['DialogueDetailOut'];
@@ -37,6 +41,11 @@ export type StateEntry = {
 
 export type StateSchema = Record<string, StateEntry>;
 
+/**
+ * A gate in the bounded requirement vocabulary. Used by dialogue responses
+ * (`Dialogue.requirements`) and by location connections (`LocationConnection.requirements`
+ * — "locked until item_cellar_key"); the backend and the MCP docstrings share it verbatim.
+ */
 export type DialogueRequirement =
   | {
       type: 'state_equals';

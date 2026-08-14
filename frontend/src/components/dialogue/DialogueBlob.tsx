@@ -7,6 +7,11 @@ import type {
   StateEntry,
   StateSchema,
 } from '../../api/client';
+import {
+  getRequirementLabel,
+  getStateEntriesByType,
+  stateTypeForRequirement,
+} from '../../lib/requirements';
 import { DialogueForm } from './DialogueForm';
 import { MemoryComboBox } from './MemoryComboBox';
 
@@ -40,30 +45,6 @@ function getEffectLabel(effect: DialogueEffect) {
   }
   if (effect.type === 'set_flag') return `Set flag: ${effect.label} = ${effect.value ? 'Yes' : 'No'}`;
   return 'Effect';
-}
-
-function getRequirementLabel(requirement: DialogueRequirement, stateSchema: StateSchema) {
-  const entry = stateSchema[requirement.state_key];
-  const label = entry?.label ?? requirement.state_key;
-
-  if (requirement.type === 'has_item') return `Requires item: ${label}`;
-
-  if (requirement.type === 'stat_check') {
-    const opLabel =
-      requirement.op === 'at_least'
-        ? 'at least'
-        : requirement.op === 'less_than'
-          ? 'less than'
-          : 'equal to';
-    return `Requires stat: ${label} ${opLabel} ${requirement.value}`;
-  }
-
-  if (entry?.type === 'remembered_choice') return `Requires choice: ${label}`;
-  return `Requires: ${label} = ${requirement.value === true ? 'Yes' : String(requirement.value)}`;
-}
-
-function getStateEntriesByType(stateSchema: StateSchema, type: StateEntry['type']) {
-  return Object.values(stateSchema).filter((entry) => entry.type === type);
 }
 
 interface DialogueBlobProps {
@@ -274,13 +255,7 @@ export function DialogueBlob({
                 <MemoryComboBox
                   entries={getStateEntriesByType(
                     stateSchema,
-                    requirementType === 'has_item'
-                      ? 'item'
-                      : requirementType === 'stat_check'
-                        ? 'stat'
-                        : requirementType === 'remembered_choice'
-                          ? 'remembered_choice'
-                          : 'flag',
+                    stateTypeForRequirement(requirementType),
                   )}
                   value={requirementStateKey}
                   placeholder="Search memory..."

@@ -15,12 +15,14 @@ from .services import imagegen, storage, yarn_export, yarn_import
 from typing import Any
 
 from .models import (
+    Ability,
     Character,
     CharacterRelationship,
     Dialogue,
     DialogueEdge,
     Level,
     Location,
+    LocationConnection,
     Project,
     Scene,
     User,
@@ -143,6 +145,41 @@ class ProjectUpdateIn(Schema):
     character_traits: list[dict[str, Any]] | None = None
 
 
+class AbilityOut(Schema):
+    """A player verb: what it is, the knobs that tune it, and what unlocks it."""
+
+    id: int
+    project_id: int | None = None
+    name: str
+    description: str = ""
+    # {key: number|string|bool} — cooldown, distance, uses. Stored verbatim.
+    params: dict[str, Any] = {}
+    # Same bounded vocabulary as Dialogue.requirements (has_item / stat_check /
+    # state_equals / remembered_choice). Empty => available from the start.
+    unlock_requirements: list[dict[str, Any]] = []
+    order: int
+
+
+class AbilityCreateIn(Schema):
+    project_id: int | None = None
+    name: str = "New Ability"
+    description: str = ""
+    params: dict[str, Any] = {}
+    unlock_requirements: list[dict[str, Any]] = []
+    order: int | None = None  # None => appended after the project's current last ability
+
+
+class AbilityUpdateIn(Schema):
+    """Partial update — omitted fields are left unchanged; `params` and
+    `unlock_requirements` replace the whole value when given."""
+
+    name: str | None = None
+    description: str | None = None
+    params: dict[str, Any] | None = None
+    unlock_requirements: list[dict[str, Any]] | None = None
+    order: int | None = None
+
+
 class LevelOut(Schema):
     id: int
     name: str
@@ -203,15 +240,41 @@ class SceneUpdateIn(Schema):
     order: int | None = None
 
 
+class LocationConnectionOut(Schema):
+    """A way out of the location whose row this appears on, described *relative to it*:
+    `other_id`/`other_name` is the place at the far end and `direction` says which way the
+    edge was authored ("out" = from this location; "in" = a bidirectional connection
+    authored from the other side, so it's still walkable from here)."""
+
+    id: int
+    from_location_id: int
+    to_location_id: int
+    other_id: int
+    other_name: str
+    direction: str  # "out" | "in"
+    label: str = ""
+    bidirectional: bool = True
+    # Same bounded vocabulary as Dialogue.requirements (has_item / stat_check /
+    # state_equals / remembered_choice) — the lock on this exit.
+    requirements: list[dict[str, Any]] = []
+
+
 class LocationOut(Schema):
-    """A place within a level, plus the characters manually placed there."""
+    """A place within a level: its detail fields, reference image, cast, and exits."""
 
     id: int
     name: str
     description: str = ""
     order: int
     level_id: int
+    kind: str = ""  # "interior" | "exterior" | ""
+    scale: str = ""  # "cramped" | "room" | "open" | "vast" | ""
+    mood: str = ""
+    props: list[str] = []
+    image_url: str = ""  # derived (presigned) from image_key at read time
+    image_key: str = ""
     characters: list[CharacterOut] = []
+    connections: list[LocationConnectionOut] = []
 
 
 class LocationCreateIn(Schema):
@@ -219,6 +282,10 @@ class LocationCreateIn(Schema):
     description: str = ""
     order: int | None = None  # None => appended after the level's current last location
     level_id: int | None = None
+    kind: str | None = None  # "interior" | "exterior"
+    scale: str | None = None  # "cramped" | "room" | "open" | "vast"
+    mood: str | None = None
+    props: list[str] | None = None
 
 
 class LocationUpdateIn(Schema):
@@ -227,10 +294,23 @@ class LocationUpdateIn(Schema):
     name: str | None = None
     description: str | None = None
     order: int | None = None
+    kind: str | None = None
+    scale: str | None = None
+    mood: str | None = None
+    props: list[str] | None = None
 
 
 class LocationCharacterIn(Schema):
     character_id: int
+
+
+class LocationConnectionIn(Schema):
+    """Connect this location to another one in the same level."""
+
+    to_id: int
+    label: str = ""
+    bidirectional: bool = True
+    requirements: list[dict[str, Any]] = []
 
 
 class DialogueSummaryOut(Schema):
@@ -575,6 +655,63 @@ def update_project(request, project_id: int, payload: ProjectUpdateIn):
     return project
 
 
+# --- Abilities (the player's verb set) --------------------------------------------------------
+@api.get("/abilities", response=list[AbilityOut], summary="List abilities")
+def list_abilities(request, project_id: int | None = None):
+    """All abilities, or just one project's when `project_id` is given — the verb set."""
+    qs = Ability.objects.all()
+    if project_id is not None:
+        qs = qs.filter(project_id=project_id)
+    return list(qs)
+
+
+@api.post("/abilities", response={201: AbilityOut}, summary="Create an ability")
+def create_ability(request, payload: AbilityCreateIn):
+    """Add a verb to the project. `unlock_requirements` uses the same bounded vocabulary as
+    dialogue requirements; empty means the player has it from the start."""
+    if payload.order is not None:
+        order = payload.order
+    else:
+        last = Ability.objects.filter(project_id=payload.project_id).order_by("-order").first()
+        order = (last.order + 1) if last else 0
+    ability = Ability.objects.create(
+        project_id=payload.project_id,
+        name=payload.name,
+        description=payload.description,
+        params=payload.params or {},
+        unlock_requirements=payload.unlock_requirements or [],
+        order=order,
+    )
+    return 201, ability
+
+
+@api.patch("/abilities/{int:ability_id}", response=AbilityOut, summary="Update an ability")
+def update_ability(request, ability_id: int, payload: AbilityUpdateIn):
+    """Partial update — `params`/`unlock_requirements` replace the whole value when given."""
+    ability = get_object_or_404(Ability, id=ability_id)
+    data = payload.model_dump(exclude_unset=True)
+    if "name" in data and data["name"]:
+        ability.name = data["name"]
+    if "description" in data and data["description"] is not None:
+        ability.description = data["description"]
+    if "params" in data and data["params"] is not None:
+        ability.params = data["params"]
+    if "unlock_requirements" in data and data["unlock_requirements"] is not None:
+        ability.unlock_requirements = data["unlock_requirements"]
+    if "order" in data and data["order"] is not None:
+        ability.order = data["order"]
+    ability.save()
+    return ability
+
+
+@api.delete("/abilities/{int:ability_id}", response={204: None}, summary="Delete an ability")
+def delete_ability(request, ability_id: int):
+    """Plain delete — nothing references an `Ability` yet (progression rewards will, once
+    they exist), so there is nothing to 409 on."""
+    get_object_or_404(Ability, id=ability_id).delete()
+    return 204, None
+
+
 @api.get("/levels", response=list[LevelOut], summary="List levels")
 def list_levels(request, project_id: int | None = None):
     """All levels, or just one project's levels when `project_id` is given."""
@@ -703,24 +840,101 @@ def update_scene(request, scene_id: int, payload: SceneUpdateIn):
 
 
 # --- Locations (places within a level) --------------------------------------------------------
+LOCATION_KINDS = {choice for choice, _ in Location.KIND_CHOICES} | {""}
+LOCATION_SCALES = {choice for choice, _ in Location.SCALE_CHOICES} | {""}
+
+
 def _location(location_id: int) -> Location:
-    """Fetch a location with its characters prefetched (for LocationOut serialization)."""
+    """Fetch a location with its characters and connections prefetched."""
     return get_object_or_404(
-        Location.objects.prefetch_related("characters"), id=location_id
+        Location.objects.prefetch_related(
+            "characters", "connections_out__to_location", "connections_in__from_location"
+        ),
+        id=location_id,
     )
+
+
+def _connection_out(conn: LocationConnection, *, from_here: bool) -> dict:
+    """Serialize a connection relative to the location whose row it appears on."""
+    other = conn.to_location if from_here else conn.from_location
+    return {
+        "id": conn.id,
+        "from_location_id": conn.from_location_id,
+        "to_location_id": conn.to_location_id,
+        "other_id": other.id,
+        "other_name": other.name,
+        "direction": "out" if from_here else "in",
+        "label": conn.label,
+        "bidirectional": conn.bidirectional,
+        "requirements": conn.requirements or [],
+    }
+
+
+def _connections_for(location: Location) -> list[dict]:
+    """Every exit walkable from this location: the ones authored here, plus the
+    bidirectional ones authored from the other end (a one-way edge shows only on its
+    source)."""
+    out = [_connection_out(c, from_here=True) for c in location.connections_out.all()]
+    out += [
+        _connection_out(c, from_here=False)
+        for c in location.connections_in.all()
+        if c.bidirectional
+    ]
+    return out
+
+
+def _location_out(location: Location) -> dict:
+    return {
+        "id": location.id,
+        "name": location.name,
+        "description": location.description,
+        "order": location.order,
+        "level_id": location.level_id,
+        "kind": location.kind,
+        "scale": location.scale,
+        "mood": location.mood,
+        "props": location.props or [],
+        "image_url": storage.view_url(location.image_key),
+        "image_key": location.image_key,
+        "characters": list(location.characters.all()),
+        "connections": _connections_for(location),
+    }
+
+
+def _location_detail(location_id: int) -> dict:
+    return _location_out(_location(location_id))
+
+
+def _art_key_prefix(location: Location) -> str:
+    """S3 folder for a location's reference images: Locations/Project-<pid>/location-<lid>.
+
+    Multiple images can live in this folder (each upload gets a unique filename).
+    """
+    project_id = location.level.project_id if location.level_id else None
+    project = f"Project-{project_id}" if project_id else "Project-none"
+    return f"Locations/{project}/location-{location.id}"
 
 
 @api.get("/locations", response=list[LocationOut], summary="List locations")
 def list_locations(request, level_id: int | None = None):
-    """All locations, or just one level's locations when `level_id` is given."""
-    qs = Location.objects.prefetch_related("characters")
+    """All locations, or just one level's locations when `level_id` is given. Each row
+    carries its detail fields, cast, and connections (its exits)."""
+    qs = Location.objects.prefetch_related(
+        "characters", "connections_out__to_location", "connections_in__from_location"
+    )
     if level_id is not None:
         qs = qs.filter(level_id=level_id)
-    return list(qs)
+    return [_location_out(loc) for loc in qs]
 
 
-@api.post("/locations", response={201: LocationOut}, summary="Create a location")
+@api.post("/locations", response={201: LocationOut, 400: Error}, summary="Create a location")
 def create_location(request, payload: LocationCreateIn):
+    kind = payload.kind or ""
+    scale = payload.scale or ""
+    if kind not in LOCATION_KINDS:
+        return 400, {"error": f"kind must be one of {sorted(LOCATION_KINDS - {''})} or blank"}
+    if scale not in LOCATION_SCALES:
+        return 400, {"error": f"scale must be one of {sorted(LOCATION_SCALES - {''})} or blank"}
     if payload.order is not None:
         order = payload.order
     else:
@@ -731,17 +945,26 @@ def create_location(request, payload: LocationCreateIn):
         description=payload.description,
         order=order,
         level_id=payload.level_id,
+        kind=kind,
+        scale=scale,
+        mood=payload.mood or "",
+        props=payload.props or [],
     )
-    return 201, _location(location.id)
+    return 201, _location_detail(location.id)
 
 
 @api.get("/locations/{int:location_id}", response=LocationOut, summary="Get a location")
 def get_location(request, location_id: int):
-    return _location(location_id)
+    return _location_detail(location_id)
 
 
-@api.patch("/locations/{int:location_id}", response=LocationOut, summary="Update a location")
+@api.patch(
+    "/locations/{int:location_id}",
+    response={200: LocationOut, 400: Error},
+    summary="Update a location",
+)
 def update_location(request, location_id: int, payload: LocationUpdateIn):
+    """Partial update: name/description/order plus the detail fields (kind, scale, mood, props)."""
     location = get_object_or_404(Location, id=location_id)
     data = payload.model_dump(exclude_unset=True)
     if "name" in data and data["name"]:
@@ -750,8 +973,20 @@ def update_location(request, location_id: int, payload: LocationUpdateIn):
         location.description = data["description"]
     if "order" in data and data["order"] is not None:
         location.order = data["order"]
+    if "kind" in data and data["kind"] is not None:
+        if data["kind"] not in LOCATION_KINDS:
+            return 400, {"error": f"kind must be one of {sorted(LOCATION_KINDS - {''})} or blank"}
+        location.kind = data["kind"]
+    if "scale" in data and data["scale"] is not None:
+        if data["scale"] not in LOCATION_SCALES:
+            return 400, {"error": f"scale must be one of {sorted(LOCATION_SCALES - {''})} or blank"}
+        location.scale = data["scale"]
+    if "mood" in data and data["mood"] is not None:
+        location.mood = data["mood"]
+    if "props" in data and data["props"] is not None:
+        location.props = data["props"]
     location.save()
-    return _location(location.id)
+    return 200, _location_detail(location.id)
 
 
 @api.delete("/locations/{int:location_id}", response={204: None}, summary="Delete a location")
@@ -773,7 +1008,7 @@ def add_location_character(request, location_id: int, payload: LocationCharacter
     if character.project_id != location.level.project_id:
         return 400, {"error": "Character must be in the same project as the level"}
     location.characters.add(character)
-    return 200, _location(location.id)
+    return 200, _location_detail(location.id)
 
 
 @api.delete(
@@ -784,7 +1019,112 @@ def add_location_character(request, location_id: int, payload: LocationCharacter
 def remove_location_character(request, location_id: int, character_id: int):
     location = get_object_or_404(Location, id=location_id)
     location.characters.remove(character_id)
-    return 200, _location(location.id)
+    return 200, _location_detail(location.id)
+
+
+@api.post(
+    "/locations/{int:location_id}/connections",
+    response={201: LocationOut, 400: Error, 404: Error},
+    summary="Connect a location to another",
+)
+def add_location_connection(request, location_id: int, payload: LocationConnectionIn):
+    """Add a labeled way from this location to another one *in the same level* — the
+    world graph's edge. `bidirectional` (default) means it's walkable both ways, so it
+    also shows on the far location. `requirements` locks the passage using the same
+    vocabulary as dialogue requirements (e.g. `has_item` + `item_cellar_key`).
+    Re-connecting the same ordered pair updates that connection instead of duplicating it.
+    """
+    location = get_object_or_404(Location, id=location_id)
+    if payload.to_id == location_id:
+        return 400, {"error": "A location cannot connect to itself"}
+    other = Location.objects.filter(id=payload.to_id).first()
+    if other is None:
+        return 404, {"error": "Target location not found"}
+    if other.level_id != location.level_id:
+        return 400, {"error": "Locations must be in the same level"}
+
+    LocationConnection.objects.update_or_create(
+        from_location=location,
+        to_location=other,
+        defaults={
+            "label": payload.label,
+            "bidirectional": payload.bidirectional,
+            "requirements": payload.requirements or [],
+        },
+    )
+    return 201, _location_detail(location.id)
+
+
+@api.delete(
+    "/locations/{int:location_id}/connections/{int:connection_id}",
+    response={200: LocationOut, 400: Error},
+    summary="Remove a connection",
+)
+def delete_location_connection(request, location_id: int, connection_id: int):
+    """Delete a connection from either end — the id comes from the location row's
+    `connections`, which includes bidirectional edges authored from the other side."""
+    location = get_object_or_404(Location, id=location_id)
+    conn = get_object_or_404(LocationConnection, id=connection_id)
+    if location_id not in (conn.from_location_id, conn.to_location_id):
+        return 400, {"error": "That connection does not touch this location"}
+    conn.delete()
+    return 200, _location_detail(location.id)
+
+
+@api.post(
+    "/locations/{int:location_id}/image",
+    response={200: LocationOut, 400: Error, 503: Error},
+    summary="Upload a location reference image",
+)
+def upload_location_image(request, location_id: int, file: UploadedFile = File(...)):
+    """Upload a reference image for the location; stores it in S3 and saves the key."""
+    location = get_object_or_404(Location.objects.select_related("level"), id=location_id)
+    content_type = file.content_type or ""
+    if not content_type.startswith("image/"):
+        return 400, {"error": "File must be an image."}
+    try:
+        _url, key = storage.upload_image(
+            file.read(), content_type, key_prefix=_art_key_prefix(location)
+        )
+    except storage.StorageNotConfigured as exc:
+        return 503, {"error": str(exc)}
+    except storage.StorageError as exc:
+        return 400, {"error": f"Upload failed: {exc}"}
+    location.image_key = key
+    location.save(update_fields=["image_key", "updated_at"])
+    return 200, _location_detail(location.id)
+
+
+@api.post(
+    "/locations/{int:location_id}/generate-image",
+    response={200: LocationOut, 400: Error, 503: Error},
+    summary="Generate a location reference image with AI",
+)
+def generate_location_image(request, location_id: int, payload: GenerateImageIn):
+    """Generate reference art with FLUX (fal.ai), upload it to S3, and save the key.
+
+    Omit `prompt` to build one from the location's name, description, and mood/kind/scale.
+    """
+    location = get_object_or_404(Location.objects.select_related("level"), id=location_id)
+    prompt = (payload.prompt or "").strip() or imagegen.default_location_prompt(
+        location.name,
+        location.description,
+        mood=location.mood,
+        kind=location.kind,
+        scale=location.scale,
+    )
+    try:
+        data, content_type = imagegen.generate_image(prompt)
+        _url, key = storage.upload_image(
+            data, content_type, key_prefix=_art_key_prefix(location)
+        )
+    except (imagegen.GenerationNotConfigured, storage.StorageNotConfigured) as exc:
+        return 503, {"error": str(exc)}
+    except (imagegen.GenerationError, storage.StorageError) as exc:
+        return 400, {"error": str(exc)}
+    location.image_key = key
+    location.save(update_fields=["image_key", "updated_at"])
+    return 200, _location_detail(location.id)
 
 
 @api.get(

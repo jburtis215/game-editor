@@ -47,6 +47,7 @@ with Characters owned by the project):
 | Area | Tools |
 | --- | --- |
 | Projects | `list_projects`, `get_project`, `create_project`, `update_project` |
+| Abilities | `list_abilities`, `create_ability`, `update_ability` |
 | Levels | `list_levels`, `create_level`, `rename_level`, `list_level_cast` |
 | Locations | `list_locations`, `create_location`, `place_character_at_location` |
 | Scenes | `list_scenes`, `create_scene` |

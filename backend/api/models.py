@@ -56,6 +56,42 @@ class Project(models.Model):
         return self.name
 
 
+class Ability(models.Model):
+    """A verb in the player's vocabulary — what the player can actually *do*.
+
+    Project-scoped data, not a questionnaire answer: the Systems architect tunes numbers
+    (jump height, run speed) but never captures the identity-defining decision of which
+    actions exist at all. `description` is plain-language behavior intent ("short burst,
+    brief invulnerability") rather than implementation; `params` is a free-form
+    `{key: number|string|bool}` bag of the knobs that matter for *this* verb (cooldown,
+    distance, uses) — stored verbatim, validated in the frontend like `systems`/`traits`.
+
+    `unlock_requirements` gates when the player gets it, using the *same* bounded
+    vocabulary as `Dialogue.requirements` / `LocationConnection.requirements`
+    (`has_item` / `stat_check` / `state_equals` / `remembered_choice`) — "unlocks when
+    `flag_met_mentor`". An empty list means the ability is available from the start.
+    """
+
+    project = models.ForeignKey(
+        Project, null=True, blank=True, on_delete=models.CASCADE, related_name="abilities"
+    )
+    name = models.CharField(max_length=100, default="New Ability")
+    description = models.TextField(blank=True, default="")
+    # {key: number|string|bool} — cooldown, distance, uses. Stored verbatim.
+    params = models.JSONField(default=dict, blank=True)
+    # Same bounded vocabulary as Dialogue.requirements; [] = available from the start.
+    unlock_requirements = models.JSONField(default=list, blank=True)
+    order = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["order", "id"]
+
+    def __str__(self) -> str:
+        return self.name
+
+
 class Level(models.Model):
     """A level in the game. Belongs to a project; contains an ordered set of scenes."""
 
@@ -135,12 +171,37 @@ class Location(models.Model):
 
     Belongs to a level (like a scene). Its `characters` M2M is the manually-assigned cast
     "present at" this location; a location's scenes are its `scenes` (Scene.location).
+
+    Beyond the narrative grouping, a location carries the detail an agent would otherwise
+    invent — `kind`/`scale`/`mood`/`props` (what the place *is*, how big it feels, how it
+    reads, and what's in it) and a reference image (`image_key`, same S3 pipeline as
+    character portraits). `LocationConnection`s turn the flat list into a world graph.
     """
+
+    KIND_CHOICES = [("interior", "Interior"), ("exterior", "Exterior")]
+    SCALE_CHOICES = [
+        ("cramped", "Cramped"),
+        ("room", "Room"),
+        ("open", "Open"),
+        ("vast", "Vast"),
+    ]
 
     level = models.ForeignKey(Level, on_delete=models.CASCADE, related_name="locations")
     name = models.CharField(max_length=100, default="New Location")
     description = models.TextField(blank=True, default="")
     order = models.PositiveIntegerField(default=0)
+    # "interior" | "exterior" | "" (unset)
+    kind = models.CharField(max_length=20, choices=KIND_CHOICES, blank=True, default="")
+    # "cramped" | "room" | "open" | "vast" | "" (unset)
+    scale = models.CharField(max_length=20, choices=SCALE_CHOICES, blank=True, default="")
+    # Free text: "smoky, candle-lit, too quiet".
+    mood = models.CharField(max_length=200, blank=True, default="")
+    # A plain list of strings — the things in the room ("bar counter", "trapdoor behind the
+    # barrels"). Where the creator's mental image lives; stored verbatim, no validation.
+    props = models.JSONField(default=list, blank=True)
+    # The reference image's S3 object key, e.g. "Locations/Project-1/location-2/<uuid>.png".
+    # Browser-facing URLs are presigned from this at read time — see storage.view_url().
+    image_key = models.CharField(max_length=500, blank=True, default="")
     # Characters present at this location (manually assigned, editable on the Locations page).
     characters = models.ManyToManyField(Character, related_name="locations", blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -151,6 +212,41 @@ class Location(models.Model):
 
     def __str__(self) -> str:
         return f"{self.level.name} / {self.name}"
+
+
+class LocationConnection(models.Model):
+    """A labeled way from one location to another — the room-and-exit graph.
+
+    Structurally the same idea as `DialogueEdge`: a directed edge with a label, one per
+    ordered pair. `bidirectional` (the default) means the exit works both ways, so the
+    connection also shows on `to_location`'s card. `requirements` gates the passage using
+    the *same* bounded vocabulary as `Dialogue.requirements` (`has_item` / `stat_check` /
+    `state_equals` / `remembered_choice`) — "locked until `item_cellar_key`" — so a
+    lock-and-key world reads the same way a gated dialogue choice does.
+    """
+
+    from_location = models.ForeignKey(
+        Location, on_delete=models.CASCADE, related_name="connections_out"
+    )
+    to_location = models.ForeignKey(
+        Location, on_delete=models.CASCADE, related_name="connections_in"
+    )
+    label = models.CharField(max_length=100, blank=True, default="")
+    bidirectional = models.BooleanField(default=True)
+    requirements = models.JSONField(default=list, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["from_location", "to_location"], name="uniq_location_connection"
+            )
+        ]
+
+    def __str__(self) -> str:
+        arrow = "<->" if self.bidirectional else "->"
+        return f"{self.from_location.name} {arrow} {self.to_location.name}: {self.label}"
 
 
 class Scene(models.Model):

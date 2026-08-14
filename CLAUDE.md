@@ -5,12 +5,15 @@ Project context for Claude Code. Read this before making changes.
 ## What this is
 
 `game-editor` is an early-stage **Figma-like design platform** for building games. The top level is
-a **Project** (a game), which has tabs: **Settings** (2D/3D + genre), **Systems** (a game-system
-architect — health, magic, inventory, … with per-system questions, producing an "ai-game-maker"
-blueprint), **Preview** (a draggable retro HUD layout), and **Levels** (each Level has a
-**branching dialogue editor**). A standalone **shape editor** (SVG outlines) also exists (route
-kept, no nav). It is intentionally minimal — favor small, readable additions over large
-abstractions until the feature set grows.
+a **Project** (a game), which has tabs: **Settings** (2D/3D + genre + default character traits),
+**Systems** (a game-system architect — health, magic, inventory, … with per-system questions,
+producing an "ai-game-maker" blueprint), **Preview** (a draggable retro HUD layout), **Levels**
+(each Level has **Locations** — described places, connected into a world map, with a
+manually-assigned cast and the scenes set there —
+and a **branching dialogue editor** with requirement/effect gating backed by project-wide story
+state), and **Characters** (per-project, with relationships and typed traits). A standalone
+**shape editor** (SVG outlines) also exists (route kept, no nav). It is intentionally minimal —
+favor small, readable additions over large abstractions until the feature set grows.
 
 The Systems/Settings/Preview tabs were consolidated from the `prototypes/lovable-game-systems-pages/`
 Lovable prototype (a different stack — TanStack/Tailwind/shadcn); their data + logic were **ported**
@@ -39,17 +42,20 @@ module declarations for CSS/asset imports — keep it.
   renders an `<Outlet/>`; the index redirects to `settings`. Tab child routes:
   `settings` = `ProjectSettingsPage` (dimension + genre + default character traits),
   `systems` = `ProjectSystemsPage`
-  (game-system architect + blueprint), `preview` = `ProjectPreviewPage` (draggable retro HUD),
+  (game-system architect + blueprint + the Abilities panel), `preview` = `ProjectPreviewPage`
+  (draggable retro HUD),
   `levels` = `LevelsPage` (project-scoped list), `characters` = `CharactersPage` (project-scoped
   list + create). Drilling in is a **full page outside the tab layout**:
-  `/projects/:projectId/levels/:levelId` = `LevelHomePage` (hub with Dialogue + Characters tiles),
+  `/projects/:projectId/levels/:levelId` = `LevelHomePage` (hub with Dialogue · Characters ·
+  Locations tiles, plus a disabled "Settings" tile stubbed for later),
   `/projects/:projectId/levels/:levelId/dialogue` = `DialogueEditorPage`,
   `/projects/:projectId/levels/:levelId/characters` = `LevelCharactersPage` (the level's cast,
-  **deduced from dialogue speakers**, each with their lines + an Actions TODO stub), and
+  **deduced from dialogue speakers**, each with their lines + an Actions TODO stub),
+  `/projects/:projectId/levels/:levelId/locations` = `LocationsPage` (the level's places), and
   `/projects/:projectId/characters/:characterId` = `CharacterDetailPage` (edit name/description,
   manage relationships, edit traits). `/shapes` = `ShapeEditorPage`
-  (route kept; no nav). **Characters are per-project** — there is no global `/characters` route or
-  nav item.
+  (route kept; no nav). **Characters are per-project, Locations are per-level** — there is no
+  global `/characters` route or nav item.
 - **Characters** (`pages/CharactersPage.tsx` + `CharacterDetailPage.tsx`): the list is a card grid
   (`Characters.css`) scoped via `GET /api/characters?project_id=`; "＋ New character" POSTs then
   routes to the detail page. Detail edits persist with `PATCH /api/characters/{id}`.
@@ -70,6 +76,24 @@ module declarations for CSS/asset imports — keep it.
   does no trait validation**. Both pages debounce saves (~400ms) because the number control is a
   slider; `CharacterDetailPage` is outside the tab layout so it has no `useProject()` — it fetches
   `GET /api/projects/{id}` itself for the defaults.
+- **Locations** (`pages/LocationsPage.tsx` + `components/locations/LocationCard.tsx`): a level's
+  places, listed via `GET /api/locations?level_id=` — the page owns the data (load/create/delete +
+  scenes), each `LocationCard` owns one place. A card carries: a **reference image** (upload or
+  ✨ generate — same S3/FLUX pipeline as character portraits), the **detail fields** `kind`/`scale`
+  (selects) · `mood` (text) · `props` (chip list), debounced ~400ms like the Settings tab;
+  assign/unassign project characters as "present here" (`POST`/`DELETE
+  …/locations/{id}/characters[/{character_id}]` — a manually-curated M2M, unlike a level's
+  *dialogue* cast on `LevelCharactersPage`, which is deduced); a **"Connects to…"** row (the world
+  graph — pick another location in the level, label the way through, "Both ways", and optionally
+  lock it with one requirement built via the shared `MemoryComboBox`); and the scenes set there
+  (`Scene.location`, optional — scenes made from the Dialogue editor have none). A connection shows
+  on **both** locations it joins, so after connect/disconnect the card calls `onConnectionsChanged`
+  and the page reloads the level's locations. `LevelHomePage`'s hub links to it alongside Dialogue
+  and Characters.
+- **Requirement helpers** (`src/lib/requirements.ts`): `getStateEntriesByType()`,
+  `stateTypeForRequirement()` and `getRequirementLabel()` — the bounded *requirement* vocabulary is
+  shared by dialogue responses and location connections, so these live in a lib rather than inside
+  `DialogueBlob` (which now imports them). The *effect* half is still inline in `DialogueBlob`.
 - `ProjectHomePage` fetches the project and passes `{ project, patchProject }` to its tabs via
   **`useOutletContext`** (`useProject()` helper). `patchProject(partial)` does an optimistic
   `PATCH /api/projects/{id}`; the Systems/Preview tabs keep a local working copy and **debounce**
@@ -80,6 +104,16 @@ module declarations for CSS/asset imports — keep it.
   coerce the project's JSON fields into well-formed typed state. **This module is the source of
   truth for the question set** — the DB only stores the *answers*. Edit questions here, not in the
   DB.
+- **Abilities** (`components/systems/AbilitiesPanel.tsx` + `AbilityCard.tsx`): the player's **verb
+  set** — what the player can *do* — as its own section at the bottom of the Systems tab. Systems
+  are a questionnaire whose answers live on the project; an ability is a **row** (`GET/POST
+  /api/abilities`, `PATCH`/`DELETE /api/abilities/{id}`), so it gets a section of its own rather
+  than hanging off one system's config panel. Each card debounces (~400ms) one PATCH of
+  name + description + `params` + `unlock_requirements`. `params` are per-ability invented keys
+  (cooldown, distance, "can swing"), coerced by `src/lib/abilities.ts`
+  (`normalizeParams()`/`paramKey()`, mirroring `characterTraits.ts`) since the backend stores the
+  JSON verbatim. The unlock gate reuses `MemoryComboBox` + `lib/requirements.ts`, exactly like a
+  location connection's lock — empty means the player starts with the ability.
 - **Theming**: the palette is CSS variables under `[data-theme='neon'|'aqua'|'light'|'studio']` in
   `App.css` (`studio` is the clean teal/light look ported from the prototype); `App.tsx` sets
   `document.documentElement.dataset.theme` and persists the choice via `PATCH /api/user`. Accent
@@ -118,6 +152,17 @@ module declarations for CSS/asset imports — keep it.
   and `setCenter`s to zoom in on that node. **Import/Export Yarn** panels (buttons next to the
   Focus/Tree toggle) round-trip a scene's graph to/from Yarn script text — see the backend bullet
   below for exactly what's supported.
+- **Requirements/effects picker** (inside `DialogueBlob`'s edit mode): "Only show this choice
+  if…" builds one `requirements` entry (previously chose X / has item / stat check / flag is),
+  and "When chosen, this will…" builds one `effects` entry (remember choice / give·remove item /
+  change stat / set flag) — the same typed vocabulary as `Dialogue.requirements`/`effects` on the
+  backend. Adding an effect **auto-registers** a new `Project.state_schema` entry (key =
+  `flag_`/`choice_`/`item_`/`stat_` + a slug of its label, deduped via `makeUniqueStateKey`) so
+  it has a human-readable label; `DialogueEditorPage.saveStateSchema` PATCHes it onto the project.
+  A requirement's target is picked from existing state via `MemoryComboBox`
+  (`components/dialogue/MemoryComboBox.tsx`, a searchable "search memory…" dropdown filtered to
+  the matching `StateEntry` type) — so a requirement can only reference state an effect has
+  already registered, never a freehand key.
 
 ### Backend (`backend/`) — Django + Django Ninja
 - `config/` — Django project: `settings.py` (env-driven via `.env`, see `.env.example`),
@@ -127,13 +172,39 @@ module declarations for CSS/asset imports — keep it.
     by the frontend. Don't wire it up or change its status without a reason.
   - `GET /api/projects`, `POST /api/projects` (create; auto-appends `order`), `GET /api/projects/{id}`,
     `PATCH /api/projects/{id}` — the **Project** (top-level game). One PATCH serves rename,
-    Settings (`dimension`/`genre` + `character_traits` JSON), Systems (`systems` JSON), and
-    Preview (`hud_layout` JSON).
+    Settings (`dimension`/`genre` + `character_traits` JSON), Systems (`systems` JSON), Preview
+    (`hud_layout` JSON), and story state (`state_schema` JSON — see the Dialogue editor bullet
+    above; not exposed as its own tab, only written via the requirements/effects picker).
+  - **Abilities** (per-project, the player's verb set): `GET /api/abilities` (optional
+    `?project_id=` filter), `POST /api/abilities` (create; auto-appends `order`, takes
+    `project_id`), `PATCH`/`DELETE /api/abilities/{id}`. `params` and `unlock_requirements` are
+    stored verbatim (normalization is the frontend's `lib/abilities.ts`); the delete is a plain
+    one because nothing references an `Ability` yet.
   - `GET /api/levels` (optional `?project_id=` filter), `POST /api/levels` (create; auto-appends
     `order`, takes `project_id`), `GET /api/levels/{id}`, `PATCH /api/levels/{id}` (rename) — the
     project's Levels list + per-level hub. `GET /api/levels/{id}/characters` returns the level's
     cast **deduced from dialogue speakers** (`Dialogue.character` where `scene.level == level`),
     each with the lines they speak — powers `LevelCharactersPage`.
+  - **Locations** (per-level): `GET /api/locations` (optional `?level_id=` filter), `POST
+    /api/locations` (create; auto-appends `order`, takes `level_id`), `GET`/`PATCH`/`DELETE
+    /api/locations/{id}` — a place within a level (`name`/`description`/`order` plus the detail
+    fields `kind`/`scale`/`mood`/`props`; `kind`/`scale` are the only validated ones — a bad value
+    is a 400, everything else is stored verbatim). `POST
+    /api/locations/{id}/characters` (`character_id`; validates same-project) and `DELETE
+    /api/locations/{id}/characters/{character_id}` manage the location's manually-assigned
+    `characters` M2M ("who's present here" — distinct from a level's dialogue-deduced cast).
+    **Connections** (the world graph): `POST /api/locations/{id}/connections`
+    (`to_id`/`label`/`bidirectional`/`requirements`; validates **same-level** and no-self, upserts
+    on the ordered pair) and `DELETE /api/locations/{id}/connections/{connection_id}` (deletable
+    from either end). Every location row carries its `connections`, serialized *relative to that
+    row* — `other_id`/`other_name` is the far end and `direction` is `"out"` (authored here) or
+    `"in"` (a bidirectional edge authored from the other side); a one-way edge shows only on its
+    source. **Reference image**: `POST /api/locations/{id}/image` (multipart `file`) and `POST
+    /api/locations/{id}/generate-image` (`{prompt?}`) mirror the character portrait endpoints
+    exactly — key prefix `Locations/Project-<pid>/location-<lid>`, `Location.image_key` persisted,
+    presigned `image_url` derived at read time, 503 when unconfigured.
+    `Scene.location` (nullable, `SET_NULL` on delete) is a scene's optional location;
+    `POST`/`PATCH /api/scenes` accept `location_id`.
   - **Characters** (per-project): `GET /api/characters` (optional `?project_id=` filter),
     `POST /api/characters` (create; name/description/project_id), `GET /api/characters/{id}`
     (detail = description + `related` list + `traits`), `PATCH /api/characters/{id}`
@@ -166,15 +237,18 @@ module declarations for CSS/asset imports — keep it.
     settings like the UI `theme`.
   - Interactive API docs (Swagger UI) at `/api/docs`; OpenAPI at `/api/openapi.json` (drives the
     frontend's `gen:api`).
-- **Character images** (`api/services/`): `storage.py` uploads image bytes to **AWS S3**
+- **Images** (`api/services/`) — shared by character portraits *and* location reference art
+  (`imagegen.default_prompt` vs `default_location_prompt`; the only difference is the prompt and
+  the key prefix): `storage.py` uploads image bytes to **AWS S3**
   (`upload_image`, `is_configured`) and `imagegen.py` generates a portrait with **FLUX via fal.ai**
   (`generate_image`, `is_configured`; calls fal's sync endpoint, downloads the result, and hands
   the bytes back for S3 upload — swap providers by editing just this file). Both are **env-driven**
   and treat blank/`REPLACE_ME` values as "not configured":
   `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`/`AWS_REGION`/`AWS_S3_BUCKET`/`AWS_S3_PUBLIC_BASE_URL`
   and `FAL_KEY`/`FAL_IMAGE_MODEL` (in `backend/.env`, see `.env.example`). Deps: `boto3`, `requests`. `upload_image(...)` returns `(public_url, key)` and
-  takes a `key_prefix` folder (the API passes `Characters/Project-<pid>/character-<cid>`); only the
-  S3 key is stored (`Character.image_key`). `view_url(key)` returns the browser URL for a key — the
+  takes a `key_prefix` folder (the API passes `Characters/Project-<pid>/character-<cid>` or
+  `Locations/Project-<pid>/location-<lid>`); only the
+  S3 key is stored (`Character.image_key` / `Location.image_key`). `view_url(key)` returns the browser URL for a key — the
   `AWS_S3_PUBLIC_BASE_URL` CDN base if set, otherwise a **presigned** GET URL for the private
   bucket. The S3 client pins the **regional** endpoint (`s3.<region>.amazonaws.com`) + virtual
   addressing so presigned URLs don't hit a 307 region-redirect that breaks the SigV4 signature —
@@ -195,10 +269,21 @@ module declarations for CSS/asset imports — keep it.
   state_schema` has the info, but scenes commonly share state keys, and declaring the same
   variable twice across multiple `.yarn` files loaded into one Yarn Spinner project is a compile
   error; add declares by hand (or export project variables once, if that's built later).
-- `api/models.py`: `Project → Level → Scene` (FKs), `Character` (now `project` FK + `description`
-  + `image_key` + `traits` JSONB; `Scene ↔ Character` M2M), `CharacterRelationship` (directed labeled edge
-  `from_character → to_character` with a `uniq_char_relationship` unique constraint; a character's
-  outgoing links are `relationships_out`), and `Dialogue` — a node in a branching dialogue
+- `api/models.py`: `Project → Level → {Location, Scene}` (FKs; `Scene.location` optionally points
+  at one of the level's `Location`s, `SET_NULL` on delete), `Character` (now `project` FK +
+  `description` + `image_key` + `traits` JSONB; `Scene ↔ Character` M2M), `CharacterRelationship`
+  (directed labeled edge `from_character → to_character` with a `uniq_char_relationship` unique
+  constraint; a character's outgoing links are `relationships_out`), `Location` (a place within a
+  level — `name`/`description`/`order`, the detail fields `kind`/`scale`/`mood`/`props` (JSONB list
+  of strings) + `image_key`, and a manually-curated `characters` M2M of who's present, distinct
+  from a scene's cast), `LocationConnection` (the room-and-exit graph — a directed
+  `from_location → to_location` edge with a `label`, a `bidirectional` flag defaulting True, a
+  `uniq_location_connection` unique constraint on the ordered pair, and `requirements` JSONB using
+  the **same** bounded vocabulary as `Dialogue.requirements`, i.e. lock-and-key design), `Ability`
+  (a project-scoped player **verb** — `name`/`description` (behavior intent, not code), `params`
+  JSONB `{key: number|string|bool}` of the knobs that tune it, `unlock_requirements` JSONB in that
+  same bounded vocabulary — empty = available from the start — and `order`), and
+  `Dialogue` — a node in a branching dialogue
   **graph** (`scene` FK, `character` FK, `text`, plus `requirements`/`effects` JSONB lists of typed
   dicts — `has_item`/`stat_check`/`state_equals`/`remembered_choice` and `give_item`/`remove_item`/
   `change_stat`/`set_flag`/`remember_choice` — a vocabulary deliberately bounded to what Yarn's
@@ -213,9 +298,13 @@ module declarations for CSS/asset imports — keep it.
   roots are nodes with no `incoming_edges`.
   **`Project`** is the top-level game container: `name`/`order` plus first-class `dimension` and
   `genre` columns, and **JSONB** fields — `systems` (the per-system enabled+answers, shape
-  defined by `gameSystems.ts`), `hud_layout` (`{systemId: {x,y}}`), and `character_traits` (the
-  project's default character traits: a list of `{key,label,type,min,max,step,unit,default}`
-  definitions). Hybrid on purpose: the
+  defined by `gameSystems.ts`), `hud_layout` (`{systemId: {x,y}}`), `state_schema` (the project's
+  story-state variables — `{state_key: {id, label, type, source_dialogue_id?}}`, `type` one of
+  `flag`/`remembered_choice`/`item`/`stat` — populated by the Dialogue editor's requirements/
+  effects picker rather than a dedicated UI; read back to label requirements/effects and to skip
+  emitting Yarn `<<declare>>` headers on export, see the Yarn bullet below), and `character_traits`
+  (the project's default character traits: a list of
+  `{key,label,type,min,max,step,unit,default}` definitions). Hybrid on purpose: the
   evolving question set stays in frontend code, so its *answers* live in JSON to avoid a migration
   per question; only stable `dimension`/`genre` are columns. Traits go one step further and store
   the *definition* too, since traits can be user-invented (see the frontend Character-traits
@@ -236,12 +325,15 @@ An **MCP** server exposing the API as tools for an AI game-creation agent (`pyth
 stdio; see its README for client wiring). It's a **client of the REST API over HTTP**, not a Django
 app — `client.py` is a thin httpx wrapper (`GAME_EDITOR_API_URL`, default
 `http://127.0.0.1:8000/api`), so tools can't bypass endpoint validation and the backend must be
-running. `server.py` holds a `FastMCP` instance with ~34 read/create/update tools mirroring the
-hierarchy (projects · levels · locations · scenes · characters · character traits · story state ·
-dialogue, incl. `import_scene_yarn`/`export_scene_yarn`), three resources (`game-editor://projects`,
+running. `server.py` holds a `FastMCP` instance with ~40 read/create/update tools mirroring the
+hierarchy (projects · abilities · levels · locations · scenes · characters · character traits ·
+story state · dialogue, incl. `import_scene_yarn`/`export_scene_yarn`, plus the world layer:
+`connect_locations`/`update_location`/`generate_location_art` and the action layer:
+`list_abilities`/`create_ability`/`update_ability`), three resources (`game-editor://projects`,
 `…/projects/{id}` = project+levels+scenes+characters, `…/scenes/{id}/yarn`) and a `build-game`
 prompt. **Tool docstrings are the agent-facing docs** — the requirement/effect vocabulary spelled
-out in `create_dialogue` must stay in sync with `DialogueRequirement`/`DialogueEffect` in
+out in `create_dialogue` (and its requirement half, repeated in `connect_locations` and
+`create_ability`) must stay in sync with `DialogueRequirement`/`DialogueEffect` in
 `frontend/src/api/client.ts` (every entry keys off `state_key`; `change_stat` uses `amount`).
 `register_state_variable` and the six `*_character_trait(s)` tools compose instead of proxying
 (GET + PATCH of `project.state_schema` / `project.character_traits` / `character.traits`) so the
