@@ -210,9 +210,14 @@ module declarations for CSS/asset imports — keep it.
     coin `o`).
   - `GET /api/projects/{id}/export` — the **unified `gameblueprint/0.1` export** built by
     `api/services/blueprint.py`: systems answers + **derived feel numbers**
-    (`api/services/derived.py`, a Python port of `systemSimMath.ts` — keep in sync), characters
-    + relationships, entity palette, tile legend (built-ins `. # = P G` + entity glyphs), and
+    (`api/services/derived.py`, a Python port of `systemSimMath.ts` — keep in sync), abilities,
+    `hud_layout`, a project-wide `yarn_declarations` block (one `<<declare>>` per state
+    variable — the per-scene Yarn omits them, since duplicate declares across files are a Yarn
+    compile error), characters
+    + relationships + **resolved traits** (project defaults overlaid, mirroring
+    `resolveTraits()`), entity palette, tile legend (built-ins `. # = P G` + entity glyphs), and
     every level's layout grid, derived entity coordinate list (top-left origin, y down),
+    locations (detail fields + the connection graph, serialized relative to each location),
     `intro_scene_id`, `on_complete.next_level_id` (next by `order`), and full dialogue graphs
     (nodes + edges). Schema contract: `docs/blueprint-schema.md` — change both together and
     bump the format version on breaking changes. `GET /api/levels/{id}/characters` returns the level's
@@ -361,13 +366,21 @@ An **MCP** server exposing the API as tools for an AI game-creation agent (`pyth
 stdio; see its README for client wiring). It's a **client of the REST API over HTTP**, not a Django
 app — `client.py` is a thin httpx wrapper (`GAME_EDITOR_API_URL`, default
 `http://127.0.0.1:8000/api`), so tools can't bypass endpoint validation and the backend must be
-running. `server.py` holds a `FastMCP` instance with ~40 read/create/update tools mirroring the
-hierarchy (projects · abilities · levels · locations · scenes · characters · character traits ·
-story state · dialogue, incl. `import_scene_yarn`/`export_scene_yarn`, plus the world layer:
-`connect_locations`/`update_location`/`generate_location_art` and the action layer:
-`list_abilities`/`create_ability`/`update_ability`), three resources (`game-editor://projects`,
-`…/projects/{id}` = project+levels+scenes+characters, `…/scenes/{id}/yarn`) and a `build-game`
-prompt. **Tool docstrings are the agent-facing docs** — the requirement/effect vocabulary spelled
+running. `server.py` holds a `FastMCP` instance with **two surfaces**. **Authoring** (~40
+read/create/update tools mirroring the hierarchy: projects · abilities · levels · locations ·
+scenes · characters · character traits · story state · dialogue, incl.
+`import_scene_yarn`/`export_scene_yarn`, plus the world layer
+`connect_locations`/`update_location`/`generate_location_art` and the action layer
+`list_abilities`/`create_ability`/`update_ability`) — driven by the `build-game` prompt.
+**Reading the design** — `get_blueprint`, `get_game_config`, `get_level_design`,
+`list_entity_types` — for an agent *building* the game in an engine, driven by the `kickoff`
+prompt. The read tools all wrap `GET /api/projects/{id}/export` and slice it rather than
+re-deriving anything, so no two can disagree; they refetch per call (no caching) so an agent
+never builds from a design the creator has since changed. Four resources
+(`game-editor://projects`, `…/projects/{id}` = a blueprint-derived overview,
+`…/projects/{id}/blueprint` = the whole document, `…/scenes/{id}/yarn`).
+**Deps** (`mcp`, `httpx`) are in `backend/requirements.txt`; `mcp` is pinned `<2` because
+this code uses `FastMCP`, which v2 renamed to `MCPServer`. **Tool docstrings are the agent-facing docs** — the requirement/effect vocabulary spelled
 out in `create_dialogue` (and its requirement half, repeated in `connect_locations` and
 `create_ability`) must stay in sync with `DialogueRequirement`/`DialogueEffect` in
 `frontend/src/api/client.ts` (every entry keys off `state_key`; `change_stat` uses `amount`).

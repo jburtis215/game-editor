@@ -126,9 +126,10 @@ small, ships on its own, and activates a piece of the story above.*
 
 ### Phase 1 — Blueprint export + MCP read layer (activates "brief the engineer")
 *Everything else layers on this. Merges the old Phases 1 and 2, minus the server that
-already exists. **Partly shipped** (Aug 2026, `13cb93a` "Level Layout"): the export
-endpoint, the derived-numbers port, and the level/entity data model landed; the MCP
-**read** layer and the build plan are what remain.*
+already exists. **Mostly shipped** (Aug 2026): the export endpoint, the derived-numbers
+port, the level/entity data model, and the MCP read layer have all landed. What remains is
+`build_plan`, the shared TS↔Python definitions, and validating the whole thing against a
+real engine build.*
 
 - [x] `GET /api/projects/{id}/export` → one versioned `"format": "gameblueprint/0.1"`
       document (treat it as a contract). Shipped: dimension/genre, per-system answers
@@ -138,13 +139,12 @@ endpoint, the derived-numbers port, and the level/entity data model landed; the 
       and every level's layout grid, flattened entity coordinates, `intro_scene_id`,
       `on_complete`, and full Scene → dialogue graph. Contract in
       `docs/blueprint-schema.md` — **change both together**.
-- [ ] **Export gaps** (each is a small addition to `build_blueprint()`, and each is what
-      a `CREATIVE-LEVERS` "Export:" line is waiting on):
-      `locations[]` per level with detail fields + connections · top-level `abilities[]` ·
-      character **resolved traits** (project defaults overlaid, per `characterTraits.ts`) ·
-      `hud_layout` · per-scene Yarn text via the existing exporter · `state_schema` as a
-      single `yarn_declarations` block (solves the cross-scene `<<declare>>` collision
-      documented in `yarn_export.py`).
+- [x] **Export gaps closed** (Aug 2026): `locations[]` per level with detail fields +
+      connections · top-level `abilities[]` · character **resolved traits** (project defaults
+      overlaid, mirroring `characterTraits.ts`) · `hud_layout` · per-scene Yarn text via the
+      existing exporter · `state_schema` as a single `yarn_declarations` block (solves the
+      cross-scene `<<declare>>` collision documented in `yarn_export.py`). Every
+      `CREATIVE-LEVERS` "Export:" line that isn't waiting on `build_plan` is now done.
 - [ ] **Where definitions live:** extract the system/genre/dimension data from
       `gameSystems.ts` into a shared `shared/gameSystems.json` consumed by both TS and
       Python. `derived.py` is currently a **hand-port** of `systemSimMath.ts` with no
@@ -161,13 +161,15 @@ endpoint, the derived-numbers port, and the level/entity data model landed; the 
       per level: layout → locations → scenes → dialogue → HUD) — rendered as templated
       prose interpolating real design facts. No LLM on our side: we serve the skeleton;
       the creator's agent adapts it to engine specifics.
-- [ ] MCP **read layer**: the server's ~40 tools are all *authoring* tools (create/update)
-      — there is no way for a building agent to pull the design. Add `get_blueprint` +
-      `get_build_plan` tools, level-layout and entity-palette tools, a
-      `game-editor://projects/{id}/blueprint` resource, a `/kickoff` prompt ("read the
-      blueprint, follow the plan, never invent values the design already answers"), and
-      rebuild the project resource on top of the export so it stops omitting locations,
-      dialogue, and per-character traits.
+- [x] MCP **read layer** (Aug 2026): `get_blueprint`, `get_game_config`,
+      `get_level_design` and `list_entity_types` — each a slice of the export, refetched per
+      call so an agent never builds from a stale design — plus a
+      `game-editor://projects/{id}/blueprint` resource, the `kickoff` prompt ("read the
+      blueprint, follow the plan, never invent values the design already answers"), and the
+      project resource rebuilt on top of the export. `get_build_plan` is the one read tool
+      still missing; it lands with the item above.
+      *(Also: `mcp` + `httpx` were never declared as dependencies — the server had never
+      been run. Now in `requirements.txt`, with `mcp` pinned `<2`.)*
 - [x] "Download blueprint" button on the Systems tab (augments the copy-only manifest).
 - [ ] Validate with the target demo: point Claude Code at an empty Godot project + the
       server; "build level 1"; confirm it pulls real design facts instead of inventing

@@ -5,6 +5,14 @@ build a game the same way the UI does: create a project, set its dimension/genre
 systems, add levels, locations, scenes, characters, then write branching dialogue (or
 paste/pull a whole scene as Yarn).
 
+Two surfaces, and which one you want depends on why you're here:
+
+* **Authoring** (`create_*` / `update_*`) — you are helping design the game.
+* **Reading the design** (`get_blueprint`, `get_game_config`, `get_level_design`,
+  `list_entity_types`) — you are *building* the game in an engine and need the plan. These
+  serve slices of the `gameblueprint/0.1` export (contract: `docs/blueprint-schema.md`);
+  start from the `/kickoff` prompt.
+
 Run it over stdio:  ./.venv/bin/python -m mcp_server
 """
 from __future__ import annotations
@@ -19,12 +27,18 @@ from . import client
 mcp = FastMCP(
     "game-editor",
     instructions=(
-        "Tools for authoring a video game in game-editor. The hierarchy is "
-        "Project → Level → (Location, Scene) → Dialogue graph, with Characters owned by the "
-        "project. Start with list_projects/create_project, then work down. Dialogue is a "
-        "graph, not a tree: create_dialogue makes a node (optionally attached to a parent) and "
-        "link_dialogue attaches an existing node as another response, which is how branches "
-        "converge. For bulk authoring, import_scene_yarn is usually faster than node-by-node."
+        "Tools for designing a video game in game-editor and for building it from that design. "
+        "The hierarchy is Project → Level → (Location, Scene) → Dialogue graph, with Characters "
+        "and Abilities owned by the project. "
+        "If you are BUILDING the game in an engine, start with get_game_config and "
+        "get_level_design (or get_blueprint for the whole plan) — the design already answers "
+        "questions like jump height, enemy behavior and level layout, so read it rather than "
+        "inventing values. "
+        "If you are AUTHORING the design, start with list_projects/create_project and work down. "
+        "Dialogue is a graph, not a tree: create_dialogue makes a node (optionally attached to a "
+        "parent) and link_dialogue attaches an existing node as another response, which is how "
+        "branches converge. For bulk authoring, import_scene_yarn is usually faster than "
+        "node-by-node."
     ),
 )
 
@@ -705,6 +719,132 @@ async def export_scene_yarn(scene_id: int) -> dict[str, Any]:
     return await client.get(f"/scenes/{scene_id}/export-yarn")
 
 
+# --- Reading the design (the build side: slices of the gameblueprint export) -------------------
+# These wrap GET /projects/{id}/export — the canonical assembled document — rather than
+# re-deriving anything, so every slice agrees with every other. The export is cheap and
+# always current; it is refetched per call on purpose (no caching) so an agent never builds
+# from a design the creator has since changed.
+
+
+async def _blueprint(project_id: int) -> dict[str, Any]:
+    return await client.get(f"/projects/{project_id}/export")
+
+
+@mcp.tool()
+async def get_blueprint(project_id: int) -> dict[str, Any]:
+    """The complete game design as one `gameblueprint/0.1` document — read this to build the game.
+
+    Contains everything the design has decided: dimension/genre, per-system tuning with
+    **derived feel numbers** (jump height in grid units, hang time, hits-to-die) and
+    plain-language takeaways, the player's abilities, characters with resolved traits and
+    relationships, the entity palette and tile legend, and every level's layout grid,
+    entity coordinates, locations, connections and dialogue (as both a graph and ready
+    Yarn script).
+
+    **Treat these values as decisions, not suggestions** — if the design answers a question,
+    implement that answer instead of picking a genre-typical default. If something genuinely
+    isn't specified, say so rather than silently inventing it.
+
+    Large for a big project: prefer get_game_config + get_level_design when you are working
+    one level at a time.
+    """
+    return await _blueprint(project_id)
+
+
+@mcp.tool()
+async def get_game_config(project_id: int) -> dict[str, Any]:
+    """The project-wide design: settings, system tuning, abilities, story variables, HUD.
+
+    Everything from the blueprint except level content — the slice you need to scaffold a
+    project and set up its systems, and small enough to keep in context while you build.
+
+    `systems[id].derived` carries the numbers to implement (`jump_height_units`,
+    `gravity_units_per_s2`, `hang_time_s`, `damage_per_hit`, `hits_to_die`) plus a
+    `takeaway` string stating the intended feel in words. One "unit" is one cell of a level's
+    layout grid, so a 3-unit jump clears a 3-cell wall.
+
+    `yarn_declarations` is a ready `<<declare>>` block for every story variable — write it to
+    a single Yarn file; the per-scene Yarn deliberately omits declares to avoid duplicate
+    declarations across files.
+    """
+    bp = await _blueprint(project_id)
+    return {
+        "format": bp.get("format"),
+        "project": bp.get("project"),
+        "systems": bp.get("systems"),
+        "abilities": bp.get("abilities"),
+        "state_schema": bp.get("state_schema"),
+        "yarn_declarations": bp.get("yarn_declarations"),
+        "hud_layout": bp.get("hud_layout"),
+        "characters": bp.get("characters"),
+        "entity_types": bp.get("entity_types"),
+        "tile_legend": bp.get("tile_legend"),
+        "levels_summary": [
+            {
+                "id": level.get("id"),
+                "name": level.get("name"),
+                "order": level.get("order"),
+                "has_layout": bool(level.get("layout")),
+                "location_count": len(level.get("locations") or []),
+                "scene_count": len(level.get("scenes") or []),
+                "next_level_id": (level.get("on_complete") or {}).get("next_level_id"),
+            }
+            for level in bp.get("levels") or []
+        ],
+    }
+
+
+@mcp.tool()
+async def get_level_design(level_id: int) -> dict[str, Any]:
+    """One level's full design: tile grid, entity placements, locations, and dialogue.
+
+    `layout.rows` is the level as ASCII, one character per cell — `(0,0)` is the **top-left**
+    cell, x grows rightward and y grows **downward**. `entities` is that same information
+    already flattened to `{glyph, x, y, entity_type_id}` coordinates; use whichever is easier.
+    Resolve glyphs through `tile_legend` (also returned here): `.` empty, `#` solid ground,
+    `=` one-way platform (collidable from above only), `P` player start, `G` goal, and one
+    glyph per entity type. `layout` is null when the designer hasn't drawn this level yet —
+    ask rather than inventing a layout.
+
+    `locations` is the narrative/spatial layer (places, their mood and props, and labeled —
+    sometimes requirement-locked — connections between them); `scenes` carries each dialogue
+    scene as a graph *and* as ready-to-compile Yarn. `on_complete.next_level_id` is where
+    finishing this level leads (null = end of game).
+    """
+    level = await client.get(f"/levels/{level_id}")
+    project_id = level.get("project_id")
+    if not project_id:
+        raise client.ApiError(
+            f"Level {level_id} has no project, so its design can't be assembled."
+        )
+    bp = await _blueprint(project_id)
+    for entry in bp.get("levels") or []:
+        if entry.get("id") == level_id:
+            return {
+                **entry,
+                "project_id": project_id,
+                "tile_legend": bp.get("tile_legend"),
+            }
+    raise client.ApiError(f"Level {level_id} was not found in project {project_id}'s blueprint.")
+
+
+@mcp.tool()
+async def list_entity_types(project_id: int) -> dict[str, Any]:
+    """The level palette — every placeable thing, plus the glyph legend for reading layouts.
+
+    Each entity type has a one-character `glyph` (how it appears in `layout.rows`), a
+    `category` (enemy / hazard / pickup / prop), a `description`, and a bounded `behavior`
+    dict: `pattern` (static | walk | patrol | fly), `speed` in grid cells per second,
+    `harmful_on_touch`, and `stompable` (Mario-style — jumping on top defeats it).
+    Implement those semantics exactly; free-form nuance lives in `description`.
+
+    `tile_legend` merges these glyphs with the five built-in tiles, so it is the complete
+    key for any level's grid.
+    """
+    bp = await _blueprint(project_id)
+    return {"entity_types": bp.get("entity_types"), "tile_legend": bp.get("tile_legend")}
+
+
 # --- Resources (read-only context the agent can pull in) --------------------------------------
 @mcp.resource("game-editor://projects", name="Projects", mime_type="application/json")
 async def projects_resource() -> list[dict[str, Any]]:
@@ -716,20 +856,62 @@ async def projects_resource() -> list[dict[str, Any]]:
     "game-editor://projects/{project_id}", name="Project overview", mime_type="application/json"
 )
 async def project_resource(project_id: str) -> dict[str, Any]:
-    """A project with its levels, each level's scenes, and the project's characters — the
-    orienting snapshot to read before authoring anything."""
-    project = await client.get(f"/projects/{project_id}")
-    levels = await client.get("/levels", project_id=project_id)
-    scenes = await client.get("/scenes")
-    characters = await client.get("/characters", project_id=project_id)
-    by_level: dict[int, list[dict[str, Any]]] = {}
-    for scene in scenes:
-        by_level.setdefault(scene["level_id"], []).append(scene)
+    """A project with its levels, each level's scenes and locations, and the project's
+    characters and abilities — the orienting snapshot to read before authoring anything.
+
+    Built from the blueprint export so it can't drift from what the build tools serve; the
+    per-level dialogue graphs are summarized rather than inlined to keep it readable (pull a
+    full graph with get_level_design or the scene's Yarn resource)."""
+    bp = await _blueprint(int(project_id))
     return {
-        "project": project,
-        "levels": [{**level, "scenes": by_level.get(level["id"], [])} for level in levels],
-        "characters": characters,
+        "project": bp.get("project"),
+        "systems": {
+            sys_id: state.get("derived") or {"enabled": state.get("enabled")}
+            for sys_id, state in (bp.get("systems") or {}).items()
+            if state.get("enabled")
+        },
+        "abilities": [
+            {"id": a["id"], "name": a["name"], "description": a["description"]}
+            for a in bp.get("abilities") or []
+        ],
+        "levels": [
+            {
+                "id": level.get("id"),
+                "name": level.get("name"),
+                "order": level.get("order"),
+                "has_layout": bool(level.get("layout")),
+                "locations": [
+                    {"id": loc["id"], "name": loc["name"]} for loc in level.get("locations") or []
+                ],
+                "scenes": [
+                    {
+                        "id": scene["id"],
+                        "name": scene["name"],
+                        "is_intro": scene["is_intro"],
+                        "node_count": len((scene.get("dialogue") or {}).get("nodes") or []),
+                    }
+                    for scene in level.get("scenes") or []
+                ],
+            }
+            for level in bp.get("levels") or []
+        ],
+        "characters": [
+            {"id": c["id"], "name": c["name"], "description": c["description"]}
+            for c in bp.get("characters") or []
+        ],
+        "state_schema": bp.get("state_schema"),
     }
+
+
+@mcp.resource(
+    "game-editor://projects/{project_id}/blueprint",
+    name="Game blueprint",
+    mime_type="application/json",
+)
+async def blueprint_resource(project_id: str) -> dict[str, Any]:
+    """The complete `gameblueprint/0.1` design document for a project — the whole plan an
+    engine implementation should be built from. Same content as the get_blueprint tool."""
+    return await _blueprint(int(project_id))
 
 
 @mcp.resource(
@@ -767,6 +949,43 @@ Then, in order:
 
 Ask before deleting or overwriting anything that already exists."""
 
+
+@mcp.prompt(name="kickoff", title="Build a game from its blueprint")
+def kickoff_prompt(project_id: str, target: str = "") -> str:
+    """Brief the agent to build an already-designed game in an engine, from the blueprint."""
+    engine = f" in {target}" if target else ""
+    return f"""Build project {project_id}{engine} from its design in game-editor.
+
+The design is already made. Your job is to implement it faithfully, not to redesign it.
+
+1. Read the plan first. Call get_game_config({project_id}) for the project-wide design —
+   settings, system tuning, abilities, story variables, HUD. Then get_level_design(level_id)
+   for the level you are building, and list_entity_types({project_id}) if you need the glyph
+   legend on its own. get_blueprint({project_id}) returns everything at once if the game is
+   small.
+
+2. Honor the numbers. `systems[id].derived` holds the designer's tuned feel —
+   `jump_height_units`, `gravity_units_per_s2`, `hang_time_s`, `damage_per_hit`,
+   `hits_to_die` — and each carries a `takeaway` sentence saying what that should feel like.
+   One "unit" is one cell of the level grid, so a 3-unit jump clears a 3-cell wall. Convert
+   units to your engine's scale once, consistently, and say what factor you used.
+
+3. Build the level from `layout.rows` exactly: `(0,0)` is top-left, y grows downward. `#` is
+   solid, `=` is a one-way platform (collidable from above only), `P` is the player start,
+   `G` is the goal, and every other glyph is an entity type — implement its `behavior` dict
+   (`pattern`, `speed`, `harmful_on_touch`, `stompable`) as written.
+
+4. For dialogue, each scene carries ready-to-compile `yarn`. Write the project's
+   `yarn_declarations` block to one file and the per-scene Yarn beside it — the scene text
+   omits `<<declare>>` lines on purpose, because duplicate declarations across files are a
+   compile error.
+
+5. **Never invent a value the design already answers.** If you need something the blueprint
+   doesn't specify, list those gaps at the end rather than filling them silently — the
+   creator would rather decide than discover your default later.
+
+Finish by summarizing what you built, the unit conversion you chose, and anything the design
+left unspecified."""
 
 if __name__ == "__main__":
     mcp.run()
