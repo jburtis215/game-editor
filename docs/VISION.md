@@ -1,7 +1,8 @@
 # game-editor — Platform Vision & Roadmap
 
-*Drafted July 2026. This is the product north star; CLAUDE.md stays the technical
-reference for what exists today.*
+*Drafted July 2026; roadmap revised August 2026 after the MCP authoring server shipped.
+This is the product north star; CLAUDE.md stays the technical reference for what exists
+today.*
 
 ## One-line pitch
 
@@ -87,70 +88,122 @@ game engine               UEFN / Godot / Roblox / …
 - Project → Levels → Scenes → branching dialogue **graph** (requirements/effects
   vocabulary deliberately bounded to Yarn `<<if>>`/`<<set>>`), per-scene Yarn
   import/export.
+- **Story state**: a `Project.state_schema` registry (flags / remembered choices /
+  items / stats). The dialogue editor's requirement/effect pickers auto-register keys,
+  and a requirement can only reference state an effect has already registered — never a
+  freehand key.
 - Systems architect: 7 systems (incl. Movement) with typed questions, live
   micro-simulation vignettes sharing one math module (`systemSimMath.ts`), blueprint
-  manifest (`buildManifest()`, copy-only).
-- Characters with descriptions, directed relationships, FLUX-generated portraits in S3
-  (presigned URLs).
+  manifest (`buildManifest()`, still copy-only — see Phase 1).
+- Characters with descriptions, directed relationships, typed **traits** (project
+  defaults overlaid live, plus per-character overrides and own traits), and uploaded or
+  FLUX-generated portraits in S3 (presigned URLs).
+- **Locations** per level: manually-cast places, each listing the scenes set there.
 - HUD layout mockup (Preview tab). Typed end-to-end API (Django Ninja → openapi-fetch).
+- **MCP authoring server** (`backend/mcp_server/`): ~34 tools, 3 resources, and a
+  `build-game` prompt, all as a thin client of the REST API. The original Phase 2
+  arrived early — but as a *write* surface. An agent can author an entire game plan,
+  yet still can't *read* the plan back out: no manifest, no sim takeaways, no
+  whole-project export. Closing that read side is now Phase 1.
 
 ## Roadmap
 
-Each phase is small, ships on its own, and activates a piece of the story above.
+*Re-sequenced August 2026: the MCP server shipped ahead of schedule as an authoring
+surface, so the phases below reorder around the real remaining gap — consumption, then
+the semantic holes an agent would otherwise fill with guesses. Each phase is still
+small, ships on its own, and activates a piece of the story above.*
 
-### Phase 1 — Unified project export (the source of truth becomes an artifact)
-*Everything else layers on this. No new UI beyond a button.*
+### Phase 1 — Blueprint export + MCP read layer (activates "brief the engineer")
+*Everything else layers on this. Merges the old Phases 1 and 2, minus the server that
+already exists.*
 
-- [ ] `GET /api/projects/{id}/export` merging: systems manifest + dimension/genre +
-      `state_schema` (as declared variables) + all characters & relationships + the full
-      Level → Scene → Dialogue/Edge graph (reuse `yarn_export`'s walker project-wide,
-      which also solves the cross-scene `<<declare>>` collision).
-- [ ] Version the format from day one: `"format": "gameblueprint/0.1"`. Treat it as a
-      contract.
-- [ ] Fold each system's **derived numbers + plain-language takeaways** from
-      `systemSimMath.ts` into the export ("a careless player dies in ~8 hits") — design
-      intent in words, the highest-signal input an agent can get.
-- [ ] Download button on the Systems tab (replaces copy-only manifest).
+- [ ] `GET /api/projects/{id}/export` → one versioned `"format": "gameblueprint/0.1"`
+      document (treat it as a contract): dimension/genre, the systems manifest
+      (per `buildManifest()`), each enabled system's **derived numbers + plain-language
+      takeaways** ported from `systemSimMath.ts` ("a careless player dies in ~8 hits" —
+      design intent in words, the highest-signal input an agent can get), `state_schema`
+      as a single `yarn_declarations` block (solves the cross-scene `<<declare>>`
+      collision documented in `yarn_export.py`), characters with resolved traits,
+      relationships and portrait URLs, the full Level → Location → Scene → dialogue
+      graph (structured nodes *and* per-scene Yarn via the existing exporter), the HUD
+      layout, and a deterministic `build_plan` (below).
+- [ ] **Where definitions live:** extract the system/genre/dimension data from
+      `gameSystems.ts` into a shared `shared/gameSystems.json` consumed by both TS and
+      Python; port only the pure sim math to `backend/api/services/sim_math.py`.
+      (Persisting a frontend-computed manifest was rejected: MCP agents PATCH `systems`
+      directly and would silently stale it — the manifest must be derived at read time.)
+- [ ] New backend services: `system_defs.py` (load the JSON, `build_manifest()`),
+      `sim_math.py`, `blueprint.py` (document assembly + build plan);
+      `declarations_for()` in `yarn_export.py`. Seeds backend test infra: TS↔Python
+      parity fixtures on manifest + takeaway strings, build-plan ordering invariants.
+- [ ] `get_build_plan`: a **deterministic** build order — topological sort over known
+      dependencies (project scaffold → declarations file → foundation systems, health
+      before combat → scoped extensions → characters before the scenes that cast them →
+      per level: locations → scenes → dialogue → HUD) — rendered as templated prose
+      interpolating real design facts. No LLM on our side: we serve the skeleton; the
+      creator's agent adapts it to engine specifics.
+- [ ] MCP: `get_blueprint` + `get_build_plan` tools, a
+      `game-editor://projects/{id}/blueprint` resource, a `/kickoff` prompt ("read the
+      blueprint, follow the plan, never invent values the design already answers"), and
+      rebuild the project resource on top of the export so it stops omitting locations,
+      dialogue, and per-character traits.
+- [ ] "Download blueprint" button on the Systems tab (augments the copy-only manifest).
+- [ ] Validate with the target demo: point Claude Code at an empty Godot project + the
+      server; "build the tavern scene"; confirm it pulls real design facts instead of
+      inventing them.
 
-### Phase 2 — MCP read server (activates "brief the engineer")
-- [ ] Thin MCP server (Python SDK) over the existing Django API/DB. Start with 3–4 read
-      tools: `get_blueprint`, `get_system_config(id)`, `get_dialogue_scene(id)`,
-      `get_character(id)` (include portrait presigned URL).
-- [ ] Per-user/project auth tokens.
-- [ ] Validate with the target demo: point Claude Code at an empty Godot project +
-      the server; "build the tavern scene"; confirm it pulls real design facts instead
-      of inventing them.
-- [ ] `get_build_plan` tool (+ a `plan.md` section in the Phase-1 export): a
-      **deterministic** build order — topological sort over known dependencies
-      (foundation systems before scoped extensions, health before combat, state schema
-      before the dialogue that reads it, characters before the scenes that cast them),
-      rendered as templated prose the same way sim takeaways are. No LLM on our side:
-      we serve the skeleton; the creator's agent adapts it to engine specifics. Once
-      Phase 3 lands, filter by `build_status` so the plan is always live. Ship a
-      `/kickoff` MCP prompt alongside it.
+### Phase 2 — Semantic model gaps (makes the blueprint unambiguous)
+*Holes a building agent currently has to fill with plausible genre defaults — the exact
+failure mode this platform exists to prevent. The full design-vocabulary expansion
+(world map, verbs/3Cs, encounters, triggers, art direction) is specified with
+actionable steps in `CREATIVE-LEVERS.md`; the items below are its prerequisites.*
 
-### Phase 3 — Build truth flows back (activates the supervisor)
+- [ ] **Player character + tags.** Systems carry `scope: player|tagged`, but no
+      character is marked as the player and there is no tag field to satisfy `tagged`.
+      Add a player designation + `Character.tags`; surface both in export and MCP.
+- [ ] **Quests / objectives.** No model for goals, win/lose conditions, or progression
+      beyond level `order`. Add a Quest/Objective model tied to existing `state_schema`
+      keys ("flag X set", "item Y held", "stat Z ≥ N" — reusing the bounded
+      requirements vocabulary), with API + MCP tools + a project tab.
+- [ ] **First-class items.** Items exist only as opaque `item_*` state keys —
+      `item_cellar_key` teaches the agent nothing beyond its label. Extend state
+      entries (or add a small Item model) with description/properties.
+- [ ] **Intent capture** (promoted from the old Phase 4): `description` on Project and
+      Level (today neither has one), per-project references/touchstones ("combat like
+      Hades"), and anti-goals ("no fail states") — all folded into the export.
+
+### Phase 3 — Agent correction & integrity tools
+*An authoring agent can't currently fix its own structural mistakes.*
+
+- [ ] DELETE endpoints + MCP tools for dialogue nodes, edges (unlink), scenes, levels,
+      and characters — today only locations and relationships are deletable.
+- [ ] MCP parity gaps: an `update_scene` tool (the PATCH endpoint exists, no tool),
+      edge reordering, `option_label` clearing.
+- [ ] Blueprint health check (moved from the old Phase 4): unreachable dialogue
+      requirements, state keys set but never read, enabled-but-unconfigured systems —
+      a readiness meter, because a source of truth that can be self-contradictory
+      isn't one.
+- [ ] `Dialogue.title` is unique **globally**; make it unique per project before
+      projects multiply and titles collide.
+
+### Phase 4 — Build truth flows back (activates the supervisor)
 - [ ] `build_status` field on design objects (dialogue scenes, systems, characters):
-      designed / in-progress / built / verified. Write tool `set_build_status`.
+      designed / in-progress / built / verified. Write tool `set_build_status`; filter
+      `get_build_plan` by it so the plan is always live.
 - [ ] `report_deviation` write tool + pending-deviations model + reconcile UI
       (accept-into-design / flag-for-rework).
 - [ ] `post_build_snapshot` write tool → S3 (reuse `storage.py` pipeline) → snapshots
       render in the "best available representation" slot next to design mockups.
 - [ ] Project-home rollup: % built, pending deviations count, latest snapshots.
-
-### Phase 4 — The reconcile ritual + intent capture
-- [ ] Publish the `/sync-check` MCP prompt; `get_design_values` diff-support tool.
-- [ ] Intent layer in the platform (and export): per-project references/touchstones
-      ("combat like Hades"), decision rationale on answers, anti-goals ("no fail
-      states"), and a pacing/beat map over the Level → Scene structure.
-- [ ] Blueprint health check: unreachable dialogue requirements, state keys set but
-      never read, enabled-but-unconfigured systems — a readiness meter, because a
-      source of truth that can be self-contradictory isn't one.
+- [ ] The reconcile ritual: publish the `/sync-check` MCP prompt + the
+      `get_design_values` diff-support tool.
+- [ ] Per-creator project auth tokens for the hosted MCP server (prereq for sharing the
+      loop beyond localhost).
 
 ### Phase 5 — Engine-specific demos (marketing, not product)
 *Order: Godot first, then UEFN/Verse, then Roblox. Godot is the cheapest proof
 (all-text formats — `.tscn`/`.tres`/GDScript; Yarn Spinner runtime exists) and doubles
-as the Phase-2 validation environment. Fortnite and Roblox are the long-term reach
+as the Phase-1 validation environment. Fortnite and Roblox are the long-term reach
 targets and should both be covered eventually.*
 
 - [ ] Godot demo: agent + MCP server scaffold a playable scene from the blueprint

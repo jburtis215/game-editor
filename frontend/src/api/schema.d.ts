@@ -161,97 +161,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/entities": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List entity types */
-        get: operations["api_api_list_entity_types"];
-        put?: never;
-        /** Create an entity type */
-        post: operations["api_api_create_entity_type"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/entities/{entity_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        /** Delete an entity type */
-        delete: operations["api_api_delete_entity_type"];
-        options?: never;
-        head?: never;
-        /** Update an entity type */
-        patch: operations["api_api_update_entity_type"];
-        trace?: never;
-    };
-    "/api/entities/{entity_id}/image": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Upload an entity sprite/concept image */
-        post: operations["api_api_upload_entity_image"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/entities/{entity_id}/generate-image": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Generate an entity image with AI */
-        post: operations["api_api_generate_entity_image"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/projects/{project_id}/seed-entities": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Add the starter platformer palette
-         * @description Create the starter entity set (walker enemy, spikes, coin) for a project, skipping
-         *     any whose glyph or name is already taken. Returns the project's full palette.
-         */
-        post: operations["api_api_seed_entities"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/projects": {
         parameters: {
             query?: never;
@@ -291,7 +200,7 @@ export interface paths {
         patch: operations["api_api_update_project"];
         trace?: never;
     };
-    "/api/projects/{project_id}/export": {
+    "/api/abilities": {
         parameters: {
             query?: never;
             header?: never;
@@ -299,19 +208,46 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Export the project as a gameblueprint document
-         * @description The unified source-of-truth export (`gameblueprint/0.1`): systems + derived feel
-         *     numbers, characters, entity palette, tile legend, and every level's layout grid,
-         *     entity coordinates, transitions, and dialogue graphs. This is the document the MCP
-         *     server and any engine codegen consume — schema contract in docs/blueprint-schema.md.
+         * List abilities
+         * @description All abilities, or just one project's when `project_id` is given — the verb set.
          */
-        get: operations["api_api_export_project"];
+        get: operations["api_api_list_abilities"];
         put?: never;
-        post?: never;
+        /**
+         * Create an ability
+         * @description Add a verb to the project. `unlock_requirements` uses the same bounded vocabulary as
+         *     dialogue requirements; empty means the player has it from the start.
+         */
+        post: operations["api_api_create_ability"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/api/abilities/{ability_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete an ability
+         * @description Plain delete — nothing references an `Ability` yet (progression rewards will, once
+         *     they exist), so there is nothing to 409 on.
+         */
+        delete: operations["api_api_delete_ability"];
+        options?: never;
+        head?: never;
+        /**
+         * Update an ability
+         * @description Partial update — `params`/`unlock_requirements` replace the whole value when given.
+         */
+        patch: operations["api_api_update_ability"];
         trace?: never;
     };
     "/api/levels": {
@@ -424,7 +360,8 @@ export interface paths {
         };
         /**
          * List locations
-         * @description All locations, or just one level's locations when `level_id` is given.
+         * @description All locations, or just one level's locations when `level_id` is given. Each row
+         *     carries its detail fields, cast, and connections (its exits).
          */
         get: operations["api_api_list_locations"];
         put?: never;
@@ -451,7 +388,10 @@ export interface paths {
         delete: operations["api_api_delete_location"];
         options?: never;
         head?: never;
-        /** Update a location */
+        /**
+         * Update a location
+         * @description Partial update: name/description/order plus the detail fields (kind, scale, mood, props).
+         */
         patch: operations["api_api_update_location"];
         trace?: never;
     };
@@ -484,6 +424,93 @@ export interface paths {
         post?: never;
         /** Remove a character from a location */
         delete: operations["api_api_remove_location_character"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/locations/{location_id}/connections": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Connect a location to another
+         * @description Add a labeled way from this location to another one *in the same level* — the
+         *     world graph's edge. `bidirectional` (default) means it's walkable both ways, so it
+         *     also shows on the far location. `requirements` locks the passage using the same
+         *     vocabulary as dialogue requirements (e.g. `has_item` + `item_cellar_key`).
+         *     Re-connecting the same ordered pair updates that connection instead of duplicating it.
+         */
+        post: operations["api_api_add_location_connection"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/locations/{location_id}/connections/{connection_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove a connection
+         * @description Delete a connection from either end — the id comes from the location row's
+         *     `connections`, which includes bidirectional edges authored from the other side.
+         */
+        delete: operations["api_api_delete_location_connection"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/locations/{location_id}/image": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Upload a location reference image
+         * @description Upload a reference image for the location; stores it in S3 and saves the key.
+         */
+        post: operations["api_api_upload_location_image"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/locations/{location_id}/generate-image": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Generate a location reference image with AI
+         * @description Generate reference art with FLUX (fal.ai), upload it to S3, and save the key.
+         *
+         *     Omit `prompt` to build one from the location's name, description, and mood/kind/scale.
+         */
+        post: operations["api_api_generate_location_image"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -712,6 +739,13 @@ export interface components {
              * @default []
              */
             related: components["schemas"]["RelatedCharacterOut"][];
+            /**
+             * Traits
+             * @default {}
+             */
+            traits: {
+                [key: string]: unknown;
+            };
         };
         /**
          * RelatedCharacterOut
@@ -736,6 +770,10 @@ export interface components {
             name?: string | null;
             /** Description */
             description?: string | null;
+            /** Traits */
+            traits?: {
+                [key: string]: unknown;
+            } | null;
         };
         /** RelationshipCreateIn */
         RelationshipCreateIn: {
@@ -751,83 +789,6 @@ export interface components {
         GenerateImageIn: {
             /** Prompt */
             prompt?: string | null;
-        };
-        /**
-         * EntityTypeOut
-         * @description A placeable non-character thing (enemy/hazard/pickup/prop) in a project's palette.
-         */
-        EntityTypeOut: {
-            /** Id */
-            id: number;
-            /** Name */
-            name: string;
-            /** Glyph */
-            glyph: string;
-            /** Category */
-            category: string;
-            /**
-             * Description
-             * @default
-             */
-            description: string;
-            /**
-             * Behavior
-             * @default {}
-             */
-            behavior: {
-                [key: string]: unknown;
-            };
-            /** Project Id */
-            project_id: number;
-            /**
-             * Image Url
-             * @default
-             */
-            image_url: string;
-        };
-        /** EntityTypeCreateIn */
-        EntityTypeCreateIn: {
-            /** Project Id */
-            project_id: number;
-            /** Name */
-            name: string;
-            /** Glyph */
-            glyph: string;
-            /**
-             * Category
-             * @default enemy
-             */
-            category: string;
-            /**
-             * Description
-             * @default
-             */
-            description: string;
-            /**
-             * Behavior
-             * @default {}
-             */
-            behavior: {
-                [key: string]: unknown;
-            };
-        };
-        /**
-         * EntityTypeUpdateIn
-         * @description Partial update — omitted fields are left unchanged.
-         */
-        EntityTypeUpdateIn: {
-            /** Name */
-            name?: string | null;
-            /** Glyph */
-            glyph?: string | null;
-            /** Category */
-            category?: string | null;
-            /** Description */
-            description?: string | null;
-            /** Behavior */
-            behavior?: {
-                [key: string]: unknown;
-            } | null;
         };
         /**
          * ProjectOut
@@ -865,6 +826,13 @@ export interface components {
             state_schema: {
                 [key: string]: unknown;
             };
+            /**
+             * Character Traits
+             * @default []
+             */
+            character_traits: {
+                [key: string]: unknown;
+            }[];
         };
         /** ProjectCreateIn */
         ProjectCreateIn: {
@@ -902,6 +870,95 @@ export interface components {
             state_schema?: {
                 [key: string]: unknown;
             } | null;
+            /** Character Traits */
+            character_traits?: {
+                [key: string]: unknown;
+            }[] | null;
+        };
+        /**
+         * AbilityOut
+         * @description A player verb: what it is, the knobs that tune it, and what unlocks it.
+         */
+        AbilityOut: {
+            /** Id */
+            id: number;
+            /** Project Id */
+            project_id?: number | null;
+            /** Name */
+            name: string;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /**
+             * Params
+             * @default {}
+             */
+            params: {
+                [key: string]: unknown;
+            };
+            /**
+             * Unlock Requirements
+             * @default []
+             */
+            unlock_requirements: {
+                [key: string]: unknown;
+            }[];
+            /** Order */
+            order: number;
+        };
+        /** AbilityCreateIn */
+        AbilityCreateIn: {
+            /** Project Id */
+            project_id?: number | null;
+            /**
+             * Name
+             * @default New Ability
+             */
+            name: string;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /**
+             * Params
+             * @default {}
+             */
+            params: {
+                [key: string]: unknown;
+            };
+            /**
+             * Unlock Requirements
+             * @default []
+             */
+            unlock_requirements: {
+                [key: string]: unknown;
+            }[];
+            /** Order */
+            order?: number | null;
+        };
+        /**
+         * AbilityUpdateIn
+         * @description Partial update — omitted fields are left unchanged; `params` and
+         *     `unlock_requirements` replace the whole value when given.
+         */
+        AbilityUpdateIn: {
+            /** Name */
+            name?: string | null;
+            /** Description */
+            description?: string | null;
+            /** Params */
+            params?: {
+                [key: string]: unknown;
+            } | null;
+            /** Unlock Requirements */
+            unlock_requirements?: {
+                [key: string]: unknown;
+            }[] | null;
+            /** Order */
+            order?: number | null;
         };
         /** LevelOut */
         LevelOut: {
@@ -913,15 +970,6 @@ export interface components {
             order: number;
             /** Project Id */
             project_id?: number | null;
-            /**
-             * Layout
-             * @default {}
-             */
-            layout: {
-                [key: string]: unknown;
-            };
-            /** Intro Scene Id */
-            intro_scene_id?: number | null;
         };
         /** LevelCreateIn */
         LevelCreateIn: {
@@ -937,19 +985,13 @@ export interface components {
         };
         /**
          * LevelUpdateIn
-         * @description Partial update of a level (rename, layout grid, intro dialogue scene).
+         * @description Partial update of a level (e.g. its title).
          */
         LevelUpdateIn: {
             /** Name */
             name?: string | null;
             /** Order */
             order?: number | null;
-            /** Layout */
-            layout?: {
-                [key: string]: unknown;
-            } | null;
-            /** Intro Scene Id */
-            intro_scene_id?: number | null;
         };
         /** LevelCharacterLineOut */
         LevelCharacterLineOut: {
@@ -1030,8 +1072,46 @@ export interface components {
             order?: number | null;
         };
         /**
+         * LocationConnectionOut
+         * @description A way out of the location whose row this appears on, described *relative to it*:
+         *     `other_id`/`other_name` is the place at the far end and `direction` says which way the
+         *     edge was authored ("out" = from this location; "in" = a bidirectional connection
+         *     authored from the other side, so it's still walkable from here).
+         */
+        LocationConnectionOut: {
+            /** Id */
+            id: number;
+            /** From Location Id */
+            from_location_id: number;
+            /** To Location Id */
+            to_location_id: number;
+            /** Other Id */
+            other_id: number;
+            /** Other Name */
+            other_name: string;
+            /** Direction */
+            direction: string;
+            /**
+             * Label
+             * @default
+             */
+            label: string;
+            /**
+             * Bidirectional
+             * @default true
+             */
+            bidirectional: boolean;
+            /**
+             * Requirements
+             * @default []
+             */
+            requirements: {
+                [key: string]: unknown;
+            }[];
+        };
+        /**
          * LocationOut
-         * @description A place within a level, plus the characters manually placed there.
+         * @description A place within a level: its detail fields, reference image, cast, and exits.
          */
         LocationOut: {
             /** Id */
@@ -1048,10 +1128,45 @@ export interface components {
             /** Level Id */
             level_id: number;
             /**
+             * Kind
+             * @default
+             */
+            kind: string;
+            /**
+             * Scale
+             * @default
+             */
+            scale: string;
+            /**
+             * Mood
+             * @default
+             */
+            mood: string;
+            /**
+             * Props
+             * @default []
+             */
+            props: string[];
+            /**
+             * Image Url
+             * @default
+             */
+            image_url: string;
+            /**
+             * Image Key
+             * @default
+             */
+            image_key: string;
+            /**
              * Characters
              * @default []
              */
             characters: components["schemas"]["CharacterOut"][];
+            /**
+             * Connections
+             * @default []
+             */
+            connections: components["schemas"]["LocationConnectionOut"][];
         };
         /** LocationCreateIn */
         LocationCreateIn: {
@@ -1069,6 +1184,14 @@ export interface components {
             order?: number | null;
             /** Level Id */
             level_id?: number | null;
+            /** Kind */
+            kind?: string | null;
+            /** Scale */
+            scale?: string | null;
+            /** Mood */
+            mood?: string | null;
+            /** Props */
+            props?: string[] | null;
         };
         /**
          * LocationUpdateIn
@@ -1081,11 +1204,44 @@ export interface components {
             description?: string | null;
             /** Order */
             order?: number | null;
+            /** Kind */
+            kind?: string | null;
+            /** Scale */
+            scale?: string | null;
+            /** Mood */
+            mood?: string | null;
+            /** Props */
+            props?: string[] | null;
         };
         /** LocationCharacterIn */
         LocationCharacterIn: {
             /** Character Id */
             character_id: number;
+        };
+        /**
+         * LocationConnectionIn
+         * @description Connect this location to another one in the same level.
+         */
+        LocationConnectionIn: {
+            /** To Id */
+            to_id: number;
+            /**
+             * Label
+             * @default
+             */
+            label: string;
+            /**
+             * Bidirectional
+             * @default true
+             */
+            bidirectional: boolean;
+            /**
+             * Requirements
+             * @default []
+             */
+            requirements: {
+                [key: string]: unknown;
+            }[];
         };
         /**
          * DialogueNodeOut
@@ -1620,232 +1776,6 @@ export interface operations {
             };
         };
     };
-    api_api_list_entity_types: {
-        parameters: {
-            query?: {
-                project_id?: number | null;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["EntityTypeOut"][];
-                };
-            };
-        };
-    };
-    api_api_create_entity_type: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["EntityTypeCreateIn"];
-            };
-        };
-        responses: {
-            /** @description Created */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["EntityTypeOut"];
-                };
-            };
-            /** @description Bad Request */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-        };
-    };
-    api_api_delete_entity_type: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                entity_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description No Content */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    api_api_update_entity_type: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                entity_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["EntityTypeUpdateIn"];
-            };
-        };
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["EntityTypeOut"];
-                };
-            };
-            /** @description Bad Request */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-        };
-    };
-    api_api_upload_entity_image: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                entity_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "multipart/form-data": {
-                    /**
-                     * File
-                     * Format: binary
-                     */
-                    file: string;
-                };
-            };
-        };
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["EntityTypeOut"];
-                };
-            };
-            /** @description Bad Request */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-            /** @description Service Unavailable */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-        };
-    };
-    api_api_generate_entity_image: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                entity_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["GenerateImageIn"];
-            };
-        };
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["EntityTypeOut"];
-                };
-            };
-            /** @description Bad Request */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-            /** @description Service Unavailable */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-        };
-    };
-    api_api_seed_entities: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                project_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["EntityTypeOut"][];
-                };
-            };
-        };
-    };
     api_api_list_projects: {
         parameters: {
             query?: never;
@@ -1938,13 +1868,13 @@ export interface operations {
             };
         };
     };
-    api_api_export_project: {
+    api_api_list_abilities: {
         parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                project_id: number;
+            query?: {
+                project_id?: number | null;
             };
+            header?: never;
+            path?: never;
             cookie?: never;
         };
         requestBody?: never;
@@ -1955,9 +1885,77 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["AbilityOut"][];
+                };
+            };
+        };
+    };
+    api_api_create_ability: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AbilityCreateIn"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AbilityOut"];
+                };
+            };
+        };
+    };
+    api_api_delete_ability: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                ability_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    api_api_update_ability: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                ability_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AbilityUpdateIn"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AbilityOut"];
                 };
             };
         };
@@ -2052,15 +2050,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["LevelOut"];
-                };
-            };
-            /** @description Bad Request */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
                 };
             };
         };
@@ -2201,6 +2190,15 @@ export interface operations {
                     "application/json": components["schemas"]["LocationOut"];
                 };
             };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     api_api_get_location: {
@@ -2269,6 +2267,15 @@ export interface operations {
                     "application/json": components["schemas"]["LocationOut"];
                 };
             };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     api_api_add_location_character: {
@@ -2334,6 +2341,176 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["LocationOut"];
+                };
+            };
+        };
+    };
+    api_api_add_location_connection: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                location_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LocationConnectionIn"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LocationOut"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    api_api_delete_location_connection: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                location_id: number;
+                connection_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LocationOut"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    api_api_upload_location_image: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                location_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": {
+                    /**
+                     * File
+                     * Format: binary
+                     */
+                    file: string;
+                };
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LocationOut"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    api_api_generate_location_image: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                location_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GenerateImageIn"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LocationOut"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
                 };
             };
         };
