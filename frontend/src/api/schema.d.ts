@@ -161,6 +161,97 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/entities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List entity types */
+        get: operations["api_api_list_entity_types"];
+        put?: never;
+        /** Create an entity type */
+        post: operations["api_api_create_entity_type"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/entities/{entity_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete an entity type */
+        delete: operations["api_api_delete_entity_type"];
+        options?: never;
+        head?: never;
+        /** Update an entity type */
+        patch: operations["api_api_update_entity_type"];
+        trace?: never;
+    };
+    "/api/entities/{entity_id}/image": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Upload an entity sprite/concept image */
+        post: operations["api_api_upload_entity_image"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/entities/{entity_id}/generate-image": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Generate an entity image with AI */
+        post: operations["api_api_generate_entity_image"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{project_id}/seed-entities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Add the starter platformer palette
+         * @description Create the starter entity set (walker enemy, spikes, coin) for a project, skipping
+         *     any whose glyph or name is already taken. Returns the project's full palette.
+         */
+        post: operations["api_api_seed_entities"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/projects": {
         parameters: {
             query?: never;
@@ -198,6 +289,29 @@ export interface paths {
          * @description Partial update: rename, Settings (dimension/genre), Systems, or Preview (hud_layout).
          */
         patch: operations["api_api_update_project"];
+        trace?: never;
+    };
+    "/api/projects/{project_id}/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Export the project as a gameblueprint document
+         * @description The unified source-of-truth export (`gameblueprint/0.1`): systems + derived feel
+         *     numbers, characters, entity palette, tile legend, and every level's layout grid,
+         *     entity coordinates, transitions, and dialogue graphs. This is the document the MCP
+         *     server and any engine codegen consume — schema contract in docs/blueprint-schema.md.
+         */
+        get: operations["api_api_export_project"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/abilities": {
@@ -791,6 +905,83 @@ export interface components {
             prompt?: string | null;
         };
         /**
+         * EntityTypeOut
+         * @description A placeable non-character thing (enemy/hazard/pickup/prop) in a project's palette.
+         */
+        EntityTypeOut: {
+            /** Id */
+            id: number;
+            /** Name */
+            name: string;
+            /** Glyph */
+            glyph: string;
+            /** Category */
+            category: string;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /**
+             * Behavior
+             * @default {}
+             */
+            behavior: {
+                [key: string]: unknown;
+            };
+            /** Project Id */
+            project_id: number;
+            /**
+             * Image Url
+             * @default
+             */
+            image_url: string;
+        };
+        /** EntityTypeCreateIn */
+        EntityTypeCreateIn: {
+            /** Project Id */
+            project_id: number;
+            /** Name */
+            name: string;
+            /** Glyph */
+            glyph: string;
+            /**
+             * Category
+             * @default enemy
+             */
+            category: string;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /**
+             * Behavior
+             * @default {}
+             */
+            behavior: {
+                [key: string]: unknown;
+            };
+        };
+        /**
+         * EntityTypeUpdateIn
+         * @description Partial update — omitted fields are left unchanged.
+         */
+        EntityTypeUpdateIn: {
+            /** Name */
+            name?: string | null;
+            /** Glyph */
+            glyph?: string | null;
+            /** Category */
+            category?: string | null;
+            /** Description */
+            description?: string | null;
+            /** Behavior */
+            behavior?: {
+                [key: string]: unknown;
+            } | null;
+        };
+        /**
          * ProjectOut
          * @description A game project plus its game-wide config (settings/systems/HUD).
          */
@@ -970,6 +1161,15 @@ export interface components {
             order: number;
             /** Project Id */
             project_id?: number | null;
+            /**
+             * Layout
+             * @default {}
+             */
+            layout: {
+                [key: string]: unknown;
+            };
+            /** Intro Scene Id */
+            intro_scene_id?: number | null;
         };
         /** LevelCreateIn */
         LevelCreateIn: {
@@ -985,13 +1185,19 @@ export interface components {
         };
         /**
          * LevelUpdateIn
-         * @description Partial update of a level (e.g. its title).
+         * @description Partial update of a level (rename, layout grid, intro dialogue scene).
          */
         LevelUpdateIn: {
             /** Name */
             name?: string | null;
             /** Order */
             order?: number | null;
+            /** Layout */
+            layout?: {
+                [key: string]: unknown;
+            } | null;
+            /** Intro Scene Id */
+            intro_scene_id?: number | null;
         };
         /** LevelCharacterLineOut */
         LevelCharacterLineOut: {
@@ -1776,6 +1982,232 @@ export interface operations {
             };
         };
     };
+    api_api_list_entity_types: {
+        parameters: {
+            query?: {
+                project_id?: number | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EntityTypeOut"][];
+                };
+            };
+        };
+    };
+    api_api_create_entity_type: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EntityTypeCreateIn"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EntityTypeOut"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    api_api_delete_entity_type: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                entity_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    api_api_update_entity_type: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                entity_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EntityTypeUpdateIn"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EntityTypeOut"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    api_api_upload_entity_image: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                entity_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": {
+                    /**
+                     * File
+                     * Format: binary
+                     */
+                    file: string;
+                };
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EntityTypeOut"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    api_api_generate_entity_image: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                entity_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GenerateImageIn"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EntityTypeOut"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    api_api_seed_entities: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EntityTypeOut"][];
+                };
+            };
+        };
+    };
     api_api_list_projects: {
         parameters: {
             query?: never;
@@ -1864,6 +2296,30 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProjectOut"];
+                };
+            };
+        };
+    };
+    api_api_export_project: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
         };
@@ -2050,6 +2506,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["LevelOut"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
                 };
             };
         };

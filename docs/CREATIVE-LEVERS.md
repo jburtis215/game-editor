@@ -13,10 +13,13 @@ discipline given a structured, agent-readable form. The platform is, in effect, 
 machine-consumable. Section headers name the tradition each lever comes from.*
 
 *Ranked by creative-control-per-effort. Everything here depends on VISION Phase 1 (the
-blueprint export) to reach the agent; each section notes what it reuses from existing
-machinery — most of these are new attachment points for patterns that already exist
-(`DialogueEdge`, the questionnaire format, the S3 image pipeline, the bounded
-requirements/effects vocabulary).*
+blueprint export) to reach the agent — **the export itself shipped in Aug 2026**
+(`services/blueprint.py`), so every "Export:" line below is now a small, unblocked
+addition to `build_blueprint()`; only the ones naming `build_plan` are still
+waiting. Each section notes what it reuses from existing machinery — most of these
+are new attachment points for patterns that already exist (`DialogueEdge`, the
+questionnaire format, the S3 image pipeline, the bounded requirements/effects
+vocabulary).*
 
 ---
 
@@ -51,7 +54,8 @@ gating, and pacing all become plannable, and the build plan can walk it — the
       other locations + optional requirement via the existing `MemoryComboBox`.
 - [ ] Export: `levels[].locations[].connections`; `build_plan` orders locations by a
       BFS from the unlocked subgraph so gated areas build after their keys exist.
-      *(deferred — no export layer yet)*
+      *(unblocked — the export shipped Aug 2026; now a small addition to
+      `build_blueprint()` + a `docs/blueprint-schema.md` section.)*
 
 ### 1b. Location detail fields
 
@@ -64,7 +68,9 @@ gating, and pacing all become plannable, and the build plan can walk it — the
       `create_location`/`list_locations` tools — no new endpoints.
 - [x] UI: fields on the `LocationsPage` card (kind/scale as small selects, mood as a
       one-line input, props as a chip list). Debounce saves ~400ms like Settings.
-- [ ] Export: all four fields on each location object. *(deferred — no export layer yet)*
+- [ ] Export: all four fields on each location object. *(unblocked — the export
+      shipped Aug 2026; now a small addition to `build_blueprint()` + a
+      `docs/blueprint-schema.md` section.)*
 
 ### 1c. Location reference imagery (generalize the portrait pipeline)
 
@@ -110,7 +116,8 @@ on both.
       and (post-Phase-1) the export all pick it up automatically. Optionally a small
       sim vignette later; not required to ship. *(No sim vignette built — optional.)*
 - [ ] `build_plan`: controls/camera build as part of the project scaffold step — first,
-      before any other system. *(deferred — no build_plan layer yet)*
+      before any other system. *(still deferred — the export layer shipped, but
+      `build_plan` has not; VISION Phase 1.)*
 
 ### 2b. Abilities / verb set (new model — it's per-project data, not a questionnaire)
 
@@ -129,7 +136,8 @@ on both.
 - [ ] Export: top-level `abilities` list; `build_plan` places abilities right after
       foundation systems and orders locked abilities after the state keys that gate
       them (same dependency logic as dialogue-after-declarations).
-      *(deferred — no export layer yet)*
+      *(unblocked — the export shipped Aug 2026; now a small addition to
+      `build_blueprint()` + a `docs/blueprint-schema.md` section.)*
 - [ ] This is also what progression finally *grants*: a quest reward or effect can
       reference an ability once both exist. *(the model exists; nothing grants one until
       quests/rewards do)*
@@ -251,13 +259,16 @@ and currently control least — every screenshot an agent produces reflects *its
 
 ## Sequencing & dependencies
 
-1. **VISION Phase 1 first** — none of this reaches the agent until the export/read
-   layer exists. Each section above adds its objects to the export as it ships.
+1. **VISION Phase 1** — half shipped: `GET /api/projects/{id}/export` exists, so the
+   `Export:` lines above are unblocked and each section adds its objects to
+   `build_blueprint()` as it ships. Still missing, and still gating the loop: the
+   **MCP read tools** (nothing serves the export to an agent) and **`build_plan`**.
 2. Then, by value-per-effort: **1a→1b→1c (world)** and **2a (controls)** — both cheap,
    both pure reuse of existing patterns; **2b (abilities)**; **4a/4b (triggers +
    items)** as one arc since they share the extracted requirement/effect picker;
    **3 (opposition)** when a combat-forward project needs it; **5** piecemeal
    alongside whatever entity is being touched.
+   *Status: 1a, 1b, 1c, 2a and 2b shipped Aug 2026, minus their export lines.*
 3. Every new model follows the house pattern: Ninja `Schema`s in `api/api.py`,
    `npm run gen:api` after each schema change, MCP tools as thin httpx proxies with
    docstrings as the agent-facing docs, deletes validated (409 on referenced), JSONB

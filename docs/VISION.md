@@ -98,13 +98,24 @@ game engine               UEFN / Godot / Roblox / …
 - Characters with descriptions, directed relationships, typed **traits** (project
   defaults overlaid live, plus per-character overrides and own traits), and uploaded or
   FLUX-generated portraits in S3 (presigned URLs).
-- **Locations** per level: manually-cast places, each listing the scenes set there.
+- **Locations** per level: manually-cast places with kind/scale/mood/props, reference
+  imagery, and a **connection graph** (labeled, optionally requirement-locked exits —
+  lock-and-key design), each listing the scenes set there.
+- **Abilities**: the player's verb set as project-scoped rows, each with invented
+  `params` and an optional unlock requirement.
+- **Level layout**: an ASCII tile grid per level (`Level.layout`) painted in
+  `LevelLayoutPage`, over a project-scoped `EntityType` palette (glyph + bounded
+  `behavior` + sprite). One cell = one game unit, so a 3-unit jump clears a 3-cell wall.
+- **Blueprint export**: `GET /api/projects/{id}/export` serves the `gameblueprint/0.1`
+  document (contract in `docs/blueprint-schema.md`), including derived feel numbers and
+  their plain-language takeaways. Downloadable from the Systems tab.
 - HUD layout mockup (Preview tab). Typed end-to-end API (Django Ninja → openapi-fetch).
-- **MCP authoring server** (`backend/mcp_server/`): ~34 tools, 3 resources, and a
+- **MCP authoring server** (`backend/mcp_server/`): ~40 tools, 3 resources, and a
   `build-game` prompt, all as a thin client of the REST API. The original Phase 2
   arrived early — but as a *write* surface. An agent can author an entire game plan,
-  yet still can't *read* the plan back out: no manifest, no sim takeaways, no
-  whole-project export. Closing that read side is now Phase 1.
+  yet still can't *read* the plan back out: the export exists over REST, but no tool
+  serves it, and no tool exposes level layouts or the entity palette at all. Closing
+  that read side is the remaining half of Phase 1.
 
 ## Roadmap
 
@@ -115,42 +126,52 @@ small, ships on its own, and activates a piece of the story above.*
 
 ### Phase 1 — Blueprint export + MCP read layer (activates "brief the engineer")
 *Everything else layers on this. Merges the old Phases 1 and 2, minus the server that
-already exists.*
+already exists. **Partly shipped** (Aug 2026, `13cb93a` "Level Layout"): the export
+endpoint, the derived-numbers port, and the level/entity data model landed; the MCP
+**read** layer and the build plan are what remain.*
 
-- [ ] `GET /api/projects/{id}/export` → one versioned `"format": "gameblueprint/0.1"`
-      document (treat it as a contract): dimension/genre, the systems manifest
-      (per `buildManifest()`), each enabled system's **derived numbers + plain-language
-      takeaways** ported from `systemSimMath.ts` ("a careless player dies in ~8 hits" —
-      design intent in words, the highest-signal input an agent can get), `state_schema`
-      as a single `yarn_declarations` block (solves the cross-scene `<<declare>>`
-      collision documented in `yarn_export.py`), characters with resolved traits,
-      relationships and portrait URLs, the full Level → Location → Scene → dialogue
-      graph (structured nodes *and* per-scene Yarn via the existing exporter), the HUD
-      layout, and a deterministic `build_plan` (below).
+- [x] `GET /api/projects/{id}/export` → one versioned `"format": "gameblueprint/0.1"`
+      document (treat it as a contract). Shipped: dimension/genre, per-system answers
+      with **derived numbers + plain-language takeaways** (`services/derived.py`, a port
+      of `systemSimMath.ts` — "a careless player dies in ~2 hits"), `state_schema`,
+      characters + relationships + portrait URLs, the entity palette, the tile legend,
+      and every level's layout grid, flattened entity coordinates, `intro_scene_id`,
+      `on_complete`, and full Scene → dialogue graph. Contract in
+      `docs/blueprint-schema.md` — **change both together**.
+- [ ] **Export gaps** (each is a small addition to `build_blueprint()`, and each is what
+      a `CREATIVE-LEVERS` "Export:" line is waiting on):
+      `locations[]` per level with detail fields + connections · top-level `abilities[]` ·
+      character **resolved traits** (project defaults overlaid, per `characterTraits.ts`) ·
+      `hud_layout` · per-scene Yarn text via the existing exporter · `state_schema` as a
+      single `yarn_declarations` block (solves the cross-scene `<<declare>>` collision
+      documented in `yarn_export.py`).
 - [ ] **Where definitions live:** extract the system/genre/dimension data from
       `gameSystems.ts` into a shared `shared/gameSystems.json` consumed by both TS and
-      Python; port only the pure sim math to `backend/api/services/sim_math.py`.
-      (Persisting a frontend-computed manifest was rejected: MCP agents PATCH `systems`
-      directly and would silently stale it — the manifest must be derived at read time.)
-- [ ] New backend services: `system_defs.py` (load the JSON, `build_manifest()`),
-      `sim_math.py`, `blueprint.py` (document assembly + build plan);
+      Python. `derived.py` is currently a **hand-port** of `systemSimMath.ts` with no
+      parity test — the two can silently drift, which is exactly the failure this item
+      prevents. (Persisting a frontend-computed manifest was rejected: MCP agents PATCH
+      `systems` directly and would silently stale it — derive at read time.)
+- [ ] Remaining backend services: `system_defs.py` (load the JSON, `build_manifest()`),
       `declarations_for()` in `yarn_export.py`. Seeds backend test infra: TS↔Python
       parity fixtures on manifest + takeaway strings, build-plan ordering invariants.
+      *(`blueprint.py` and `derived.py` exist; `sim_math.py` shipped as `derived.py`.)*
 - [ ] `get_build_plan`: a **deterministic** build order — topological sort over known
       dependencies (project scaffold → declarations file → foundation systems, health
       before combat → scoped extensions → characters before the scenes that cast them →
-      per level: locations → scenes → dialogue → HUD) — rendered as templated prose
-      interpolating real design facts. No LLM on our side: we serve the skeleton; the
-      creator's agent adapts it to engine specifics.
-- [ ] MCP: `get_blueprint` + `get_build_plan` tools, a
+      per level: layout → locations → scenes → dialogue → HUD) — rendered as templated
+      prose interpolating real design facts. No LLM on our side: we serve the skeleton;
+      the creator's agent adapts it to engine specifics.
+- [ ] MCP **read layer**: the server's ~40 tools are all *authoring* tools (create/update)
+      — there is no way for a building agent to pull the design. Add `get_blueprint` +
+      `get_build_plan` tools, level-layout and entity-palette tools, a
       `game-editor://projects/{id}/blueprint` resource, a `/kickoff` prompt ("read the
       blueprint, follow the plan, never invent values the design already answers"), and
       rebuild the project resource on top of the export so it stops omitting locations,
       dialogue, and per-character traits.
-- [ ] "Download blueprint" button on the Systems tab (augments the copy-only manifest).
+- [x] "Download blueprint" button on the Systems tab (augments the copy-only manifest).
 - [ ] Validate with the target demo: point Claude Code at an empty Godot project + the
-      server; "build the tavern scene"; confirm it pulls real design facts instead of
-      inventing them.
+      server; "build level 1"; confirm it pulls real design facts instead of inventing
+      them.
 
 ### Phase 2 — Semantic model gaps (makes the blueprint unambiguous)
 *Holes a building agent currently has to fill with plausible genre defaults — the exact
