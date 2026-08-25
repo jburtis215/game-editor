@@ -126,10 +126,10 @@ small, ships on its own, and activates a piece of the story above.*
 
 ### Phase 1 — Blueprint export + MCP read layer (activates "brief the engineer")
 *Everything else layers on this. Merges the old Phases 1 and 2, minus the server that
-already exists. **Mostly shipped** (Aug 2026): the export endpoint, the derived-numbers
-port, the level/entity data model, and the MCP read layer have all landed. What remains is
-`build_plan`, the shared TS↔Python definitions, and validating the whole thing against a
-real engine build.*
+already exists. **Shipped** (Aug 2026): the export endpoint, the derived-numbers port, the
+level/entity data model, the MCP read layer, and the addressing/manifest layer. `build_plan`
+was dropped rather than built (see below). What remains is the shared TS↔Python definitions
+and validating the whole thing against a real engine build.*
 
 - [x] `GET /api/projects/{id}/export` → one versioned `"format": "gameblueprint/0.1"`
       document (treat it as a contract). Shipped: dimension/genre, per-system answers
@@ -155,12 +155,21 @@ real engine build.*
       `declarations_for()` in `yarn_export.py`. Seeds backend test infra: TS↔Python
       parity fixtures on manifest + takeaway strings, build-plan ordering invariants.
       *(`blueprint.py` and `derived.py` exist; `sim_math.py` shipped as `derived.py`.)*
-- [ ] `get_build_plan`: a **deterministic** build order — topological sort over known
-      dependencies (project scaffold → declarations file → foundation systems, health
-      before combat → scoped extensions → characters before the scenes that cast them →
-      per level: layout → locations → scenes → dialogue → HUD) — rendered as templated
-      prose interpolating real design facts. No LLM on our side: we serve the skeleton;
-      the creator's agent adapts it to engine specifics.
+- [x] ~~`get_build_plan`: a deterministic build order — topological sort…~~ **Dropped
+      (Aug 2026)**, replaced by `get_manifest` + addresses/hashes. The creator directs their
+      own agent ("do movement first"), so an order *we* compute is a third opinion competing
+      with theirs, and "health before combat" is a notch this platform shouldn't have. What
+      an agent actually needs is a **map, not a route**: every object with a stable address,
+      a summary, a hash, and the dependencies the design genuinely *entails* — a locked exit
+      needs its key, a scene needs its cast. Same information, no invented sequence, and
+      nothing fights the creator when they specify one. See `api/services/manifest.py`.
+- [x] **Addresses + hashes** (Aug 2026): every design object carries a readable address
+      (`entity:goomba`) that follows renames, and a content hash. These are what make the
+      rest of the loop possible — without a shared name for a thing, "I built the walker"
+      and "does the walker still match?" have no common referent, and drift is undetectable.
+      The hash gives **staleness detection for free**: once an agent reports building
+      against a hash, the platform alone can tell that the design has since changed, with no
+      engine access and no reconcile pass. `api/services/addressing.py`.
 - [x] MCP **read layer** (Aug 2026): `get_blueprint`, `get_game_config`,
       `get_level_design` and `list_entity_types` — each a slice of the export, refetched per
       call so an agent never builds from a stale design — plus a
@@ -210,11 +219,27 @@ actionable steps in `CREATIVE-LEVERS.md`; the items below are its prerequisites.
       projects multiply and titles collide.
 
 ### Phase 4 — Build truth flows back (activates the supervisor)
-- [ ] `build_status` field on design objects (dialogue scenes, systems, characters):
-      designed / in-progress / built / verified. Write tool `set_build_status`; filter
-      `get_build_plan` by it so the plan is always live.
+*Now unblocked by addresses + hashes: an agent can finally name the thing it built and say
+which version of the design it built from. Godot is the only target for now — deliberately,
+since engine-specific conventions in the `kickoff` prompt do more for the agent's efficiency
+than any additional data we could serve.*
+
+- [ ] `report_built(address, engine_path, hash)` — the write half of the loop. Gives
+      build status, the % rollup, and staleness detection together: an object whose current
+      hash differs from the one it was built against is stale, detectable with no engine
+      access at all.
+- [ ] `build_status` on design objects: designed / in-progress / built / verified, mostly
+      derived from `report_built` rather than set by hand.
+- [ ] **Policy — decided:** engine changes that *contradict* the design arrive as pending
+      deviations the creator accepts or rejects. Values the design never specified (the
+      agent had to invent one) are recorded as design, flagged as originating in the build —
+      nothing is being overwritten, and the design gets more complete rather than drifting.
 - [ ] `report_deviation` write tool + pending-deviations model + reconcile UI
-      (accept-into-design / flag-for-rework).
+      (accept-into-design / flag-for-rework), keyed by address — including **field**
+      addresses (`system:movement.gravity`) so a mismatch names exactly one value.
+- [ ] `get_design_values`: the same design as a **flat** list of `{address, value}` rows.
+      The nested blueprint is right for comprehension and wrong for diffing; `/sync-check`
+      needs something a mechanical comparison can walk.
 - [ ] `post_build_snapshot` write tool → S3 (reuse `storage.py` pipeline) → snapshots
       render in the "best available representation" slot next to design mockups.
 - [ ] Project-home rollup: % built, pending deviations count, latest snapshots.

@@ -208,6 +208,11 @@ module declarations for CSS/asset imports — keep it.
     stored under `Entities/Project-<pid>/entity-<eid>/`), and
     `POST /api/projects/{id}/seed-entities` (idempotent starter set: walker `e`, spikes `^`,
     coin `o`).
+  - `GET /api/projects/{id}/manifest` — the **design index** built by
+    `api/services/manifest.py`: one line per object (address · summary · hash ·
+    `depends_on`), meant to be read *before* the export so an agent can pull only what it
+    needs. `depends_on` records what the design **entails** (a locked exit needs its key,
+    a scene needs its cast) — deliberately **not** a build order; see the module docstring.
   - `GET /api/projects/{id}/export` — the **unified `gameblueprint/0.1` export** built by
     `api/services/blueprint.py`: systems answers + **derived feel numbers**
     (`api/services/derived.py`, a Python port of `systemSimMath.ts` — keep in sync), abilities,
@@ -275,6 +280,21 @@ module declarations for CSS/asset imports — keep it.
     settings like the UI `theme`.
   - Interactive API docs (Swagger UI) at `/api/docs`; OpenAPI at `/api/openapi.json` (drives the
     frontend's `gen:api`).
+- **Addresses + hashes** (`api/services/addressing.py`, backed by the `DesignAddress`
+  model): every design object gets a readable **address** (`entity:goomba`,
+  `system:movement`) and a content **hash**. They do different jobs — the address is a
+  *name* (the shared word the platform, the creator and a building agent all use, readable
+  enough for an engine filename); the hash is a *version* (fingerprints the object's export
+  slice, so a build recorded against one can be spotted as stale). An address is derived
+  from the object's name and **follows renames** — renaming Walker → Goomba yields
+  `entity:goomba`, retires `entity:walker` into `former_addresses`, and should drive an
+  engine-side rename; the numeric `id` stays the identity. Retired addresses still
+  `resolve()`, with a live address always winning over a retired one. Rows are assigned
+  **lazily** during export/manifest builds, so no create endpoint has to know about them.
+  Hashing is content-based rather than `updated_at` because the editor debounce-saves while
+  sliders are dragged, so timestamps would churn constantly. `system:`/`state:`/`dialogue:`
+  addresses need no row — their names are already stable keys (`dialogue:` reuses
+  `Dialogue.title`, the same idea applied earlier for Yarn).
 - **Images** (`api/services/`) — shared by character portraits *and* location reference art
   (`imagegen.default_prompt` vs `default_location_prompt`; the only difference is the prompt and
   the key prefix): `storage.py` uploads image bytes to **AWS S3**
@@ -324,6 +344,9 @@ module declarations for CSS/asset imports — keep it.
   (a project-scoped player **verb** — `name`/`description` (behavior intent, not code), `params`
   JSONB `{key: number|string|bool}` of the knobs that tune it, `unlock_requirements` JSONB in that
   same bounded vocabulary — empty = available from the start — and `order`), and
+  `DesignAddress` (the readable-name index — `project`/`object_type`/`object_id`/`slug`/
+  `is_current`, with a partial unique constraint so only one live object holds a name and
+  retired rows keep the rename trail), and
   `Dialogue` — a node in a branching dialogue
   **graph** (`scene` FK, `character` FK, `text`, plus `requirements`/`effects` JSONB lists of typed
   dicts — `has_item`/`stat_check`/`state_equals`/`remembered_choice` and `give_item`/`remove_item`/
@@ -372,9 +395,9 @@ scenes · characters · character traits · story state · dialogue, incl.
 `import_scene_yarn`/`export_scene_yarn`, plus the world layer
 `connect_locations`/`update_location`/`generate_location_art` and the action layer
 `list_abilities`/`create_ability`/`update_ability`) — driven by the `build-game` prompt.
-**Reading the design** — `get_blueprint`, `get_game_config`, `get_level_design`,
-`list_entity_types` — for an agent *building* the game in an engine, driven by the `kickoff`
-prompt. The read tools all wrap `GET /api/projects/{id}/export` and slice it rather than
+**Reading the design** — `get_manifest` (the index, and the intended first read),
+`get_blueprint`, `get_game_config`, `get_level_design`, `list_entity_types` — for an agent
+*building* the game in an engine, driven by the `kickoff` prompt. The read tools all wrap `GET /api/projects/{id}/export` and slice it rather than
 re-deriving anything, so no two can disagree; they refetch per call (no caching) so an agent
 never builds from a design the creator has since changed. Four resources
 (`game-editor://projects`, `…/projects/{id}` = a blueprint-derived overview,

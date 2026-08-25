@@ -15,7 +15,9 @@ assembled canonically, so prefer wrapping the export.
 ```jsonc
 {
   "format": "gameblueprint/0.1",
-  "project": { "id": 3, "name": "Sim Test", "dimension": "2d", "genre": "platformer" },
+  "hash": "0b209380",                 // covers the whole design — one comparison for "did anything change?"
+  "project": { "id": 3, "name": "Sim Test", "address": "project:sim_test",
+               "dimension": "2d", "genre": "platformer" },
   "systems": { /* per-system config + derived feel numbers, see below */ },
   "hud_layout": { /* {systemId: {x, y}} — the designer's HUD mockup positions */ },
   "state_schema": { /* project-wide state variables used by dialogue requirements/effects */ },
@@ -27,6 +29,57 @@ assembled canonically, so prefer wrapping the export.
   "levels": [ /* ordered; layout grids, entity coords, locations, transitions, dialogue */ ]
 }
 ```
+
+## Addresses and hashes
+
+Every design object carries an **address** and a **hash**. They do different jobs and are
+easy to confuse.
+
+**An address is a name.** `entity:goomba`, `system:movement`, `scene:the_handoff` — the one
+word the platform, the creator and a building agent all use for the same thing, readable
+enough to appear in an engine filename. Types: `project` · `system` · `ability` ·
+`character` · `entity` · `level` · `location` · `scene` · `state` · `dialogue`. A field
+within an object is addressed with a dot: `system:movement.jumpHeight`.
+
+An address **follows renames**. Rename "Walker" to "Goomba" and the address becomes
+`entity:goomba`, `former_addresses` records `entity:walker`, and the engine-side artifact
+should be renamed to match — a rename is a change to propagate, not a break to survive. The
+object's numeric `id` is its identity and never changes, so **a consumer should key its own
+records on `id`** and treat the address as a name it may need to update. Old addresses keep
+resolving; a name freed by a rename and then reused points at the live object.
+
+`system:*` and `state:*` addresses never rename — a system id comes from code and a state
+key is minted once by the dialogue editor.
+
+**A hash is a version.** Each object's `hash` fingerprints its slice of this document, and
+`project.hash` at the top level covers all of them — so "did anything change?" is one
+comparison. Record an object's hash alongside whatever you build from it; when the hash
+later differs, that object's design changed and the build is stale.
+
+Hashes are content-based rather than timestamps on purpose: the editor debounce-saves while
+a slider is being dragged, so `updated_at` churns constantly while the design does not
+actually change. A rename *does* change the hash, because a renamed object needs its
+engine-side artifact renamed too.
+
+## The manifest
+
+`GET /api/projects/{id}/manifest` is a separate, much smaller document — the index you read
+*before* this one. One line per object:
+
+```jsonc
+{
+  "address": "location:cellar", "name": "Cellar", "kind": "location",
+  "hash": "9c41ab02", "summary": "interior · 1 exit(s)",
+  "depends_on": ["state:item_cellar_key"]
+}
+```
+
+`depends_on` records **what the design entails, never a build order we invented**: an exit
+locked by `state:item_cellar_key` cannot be opened before something grants that key (the
+state entry's own `granted_by` says which scene does), an ability gated on a variable needs
+it declared, a scene needs the characters it casts. An agent can derive an order from those
+facts and is free to choose a different one — deciding that "health builds before combat"
+is not this platform's call.
 
 ## systems
 
@@ -275,7 +328,8 @@ other. Refetched per call (no caching), so an agent never builds from a stale de
 | tool | serves |
 |------|--------|
 | `get_blueprint(project_id)` | the whole document (small games) |
-| `get_game_config(project_id)` | everything except level content, plus a `levels_summary` |
+| `get_manifest(project_id)` | the index above — **the intended first read** |
+| `get_game_config(project_id)` | project-wide *values*: settings, systems + derived, abilities, state, declarations, HUD |
 | `get_level_design(level_id)` | one `levels[]` entry — layout, entities, locations, scenes — plus `tile_legend` |
 | `list_entity_types(project_id)` | `entity_types` + `tile_legend` |
 | `get_character(id)` / `get_character_traits(id)` | one character; the second resolves project defaults |

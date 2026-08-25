@@ -11,7 +11,7 @@ from django.shortcuts import get_object_or_404
 from ninja import File, NinjaAPI, Schema
 from ninja.files import UploadedFile
 
-from .services import blueprint, imagegen, storage, yarn_export, yarn_import
+from .services import blueprint, imagegen, manifest, storage, yarn_export, yarn_import
 
 from typing import Any
 
@@ -877,6 +877,21 @@ def export_project(request, project_id: int):
     server and any engine codegen consume — schema contract in docs/blueprint-schema.md."""
     project = get_object_or_404(Project, id=project_id)
     return blueprint.build_blueprint(project)
+
+
+@api.get(
+    "/projects/{int:project_id}/manifest",
+    response=dict,
+    summary="Index every design object with its address, hash and dependencies",
+)
+def project_manifest(request, project_id: int):
+    """A map of the design, not a route through it: one line per object with its stable
+    address, a one-phrase summary, a content hash for staleness checks, and the
+    dependencies its own design implies (a locked exit needs its key; a scene needs its
+    cast). Small enough for a building agent to read first and then pull only what it
+    needs — see `api/services/manifest.py` for why no build *order* is asserted."""
+    project = get_object_or_404(Project, id=project_id)
+    return manifest.build_manifest(project)
 
 
 # --- Abilities (the player's verb set) --------------------------------------------------------

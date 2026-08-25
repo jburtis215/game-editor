@@ -9,7 +9,7 @@ breaking change.
 from typing import Any
 
 from ..models import DialogueEdge, EntityType, Level, Project
-from . import derived, storage, yarn_export
+from . import addressing, derived, storage, yarn_export
 
 FORMAT = "gameblueprint/0.1"
 
@@ -123,7 +123,7 @@ def _connections_for(location) -> list[dict]:
 def _locations_for(level) -> list[dict]:
     """The level's places: detail fields, cast, exits, and the scenes set there."""
     return [
-        {
+        _addressed(level.project_id, "location", {
             "id": loc.id,
             "name": loc.name,
             "description": loc.description,
@@ -136,7 +136,7 @@ def _locations_for(level) -> list[dict]:
             "characters": [{"id": c.id, "name": c.name} for c in loc.characters.all()],
             "connections": _connections_for(loc),
             "scene_ids": [s.id for s in loc.scenes.all()],
-        }
+        })
         for loc in level.locations.all()
     ]
 
@@ -152,6 +152,7 @@ def _dialogue_graph(scene) -> dict:
             {
                 "id": n.id,
                 "title": n.title,
+                "address": addressing.dialogue_address(n.title),
                 "speaker": n.character.name if n.character else None,
                 "character_id": n.character_id,
                 "text": n.text,
@@ -173,6 +174,23 @@ def _dialogue_graph(scene) -> dict:
     }
 
 
+def _addressed(project_id: int, object_type: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """Stamp a serialized object with its address, any former addresses, and its hash.
+
+    The hash covers the payload *including* the address, so a rename shows up as a change —
+    which is right: a renamed object needs its engine-side artifact renamed too.
+    """
+    address = addressing.ensure_address(
+        project_id, object_type, payload["id"], payload.get("name") or ""
+    )
+    out = {**payload, "address": address}
+    former = addressing.former_addresses(project_id, object_type, payload["id"])
+    if former:
+        out["former_addresses"] = former
+    out["hash"] = addressing.content_hash(out)
+    return out
+
+
 def build_blueprint(project: Project) -> dict[str, Any]:
     entity_types = list(project.entity_types.all())
     glyph_to_entity = {e.glyph: e for e in entity_types}
@@ -192,10 +210,15 @@ def build_blueprint(project: Project) -> dict[str, Any]:
         if not isinstance(state, dict):
             continue
         values = state.get("values") or {}
-        entry: dict[str, Any] = {"enabled": bool(state.get("enabled")), "values": values}
+        entry: dict[str, Any] = {
+            "address": addressing.system_address(sys_id),
+            "enabled": bool(state.get("enabled")),
+            "values": values,
+        }
         d = derived.derive_for_system(sys_id, values)
         if d:
             entry["derived"] = d
+        entry["hash"] = addressing.content_hash(entry)
         systems_out[sys_id] = entry
 
     tile_legend: dict[str, str] = dict(BUILTIN_TILES)
@@ -206,7 +229,7 @@ def build_blueprint(project: Project) -> dict[str, Any]:
     for i, level in enumerate(levels):
         next_level = levels[i + 1] if i + 1 < len(levels) else None
         levels_out.append(
-            {
+            _addressed(project.id, "level", {
                 "id": level.id,
                 "name": level.name,
                 "order": level.order,
@@ -216,7 +239,7 @@ def build_blueprint(project: Project) -> dict[str, Any]:
                 "on_complete": {"next_level_id": next_level.id if next_level else None},
                 "locations": _locations_for(level),
                 "scenes": [
-                    {
+                    _addressed(project.id, "scene", {
                         "id": s.id,
                         "name": s.name,
                         "order": s.order,
@@ -224,37 +247,42 @@ def build_blueprint(project: Project) -> dict[str, Any]:
                         "is_intro": s.id == level.intro_scene_id,
                         "dialogue": _dialogue_graph(s),
                         "yarn": yarn_export.export_scene_to_yarn(s),
-                    }
+                    })
                     for s in level.scenes.all()
                 ],
-            }
+            })
         )
 
-    return {
+    document: dict[str, Any] = {
         "format": FORMAT,
         "project": {
             "id": project.id,
             "name": project.name,
+            "address": addressing.project_address(project.name),
             "dimension": project.dimension or None,
             "genre": project.genre or None,
         },
         "systems": systems_out,
         "hud_layout": project.hud_layout or {},
-        "state_schema": project.state_schema or {},
+        "state_schema": {
+            key: {**entry, "address": addressing.state_address(key)}
+            for key, entry in (project.state_schema or {}).items()
+            if isinstance(entry, dict)
+        },
         "yarn_declarations": _yarn_declarations(project.state_schema or {}),
         "abilities": [
-            {
+            _addressed(project.id, "ability", {
                 "id": a.id,
                 "name": a.name,
                 "description": a.description,
                 "params": a.params or {},
                 "unlock_requirements": a.unlock_requirements or [],
                 "order": a.order,
-            }
+            })
             for a in project.abilities.all()
         ],
         "characters": [
-            {
+            _addressed(project.id, "character", {
                 "id": c.id,
                 "name": c.name,
                 "description": c.description,
@@ -268,11 +296,11 @@ def build_blueprint(project: Project) -> dict[str, Any]:
                     }
                     for r in c.relationships_out.select_related("to_character").all()
                 ],
-            }
+            })
             for c in project.characters.all()
         ],
         "entity_types": [
-            {
+            _addressed(project.id, "entity", {
                 "id": e.id,
                 "name": e.name,
                 "glyph": e.glyph,
@@ -280,9 +308,27 @@ def build_blueprint(project: Project) -> dict[str, Any]:
                 "description": e.description,
                 "behavior": e.behavior or {},
                 "image_url": storage.view_url(e.image_key),
-            }
+            })
             for e in entity_types
         ],
         "tile_legend": tile_legend,
         "levels": levels_out,
     }
+    # One hash standing for the whole design, so "has anything changed at all?" is a single
+    # comparison. Built from the per-object hashes rather than the document, so incidental
+    # things that carry no hash (presigned image URLs, which are re-signed on every read)
+    # can't make an unchanged design look modified.
+    document["hash"] = addressing.rollup_hash(_object_hashes(document))
+    return document
+
+
+def _object_hashes(document: dict[str, Any]) -> list[str]:
+    """Every per-object hash in the document, in no particular order (rollup_hash sorts)."""
+    hashes = [entry["hash"] for entry in (document.get("systems") or {}).values()]
+    for key in ("abilities", "characters", "entity_types"):
+        hashes += [entry["hash"] for entry in document.get(key) or []]
+    for level in document.get("levels") or []:
+        hashes.append(level["hash"])
+        hashes += [loc["hash"] for loc in level.get("locations") or []]
+        hashes += [scene["hash"] for scene in level.get("scenes") or []]
+    return hashes

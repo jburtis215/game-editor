@@ -56,13 +56,24 @@ slices can disagree, and each refetches so the agent never builds from a stale d
 
 | Tool | Serves |
 | --- | --- |
+| `get_manifest(project_id)` | **the intended first read** — one line per design object: stable address, one-phrase summary, content hash, and the dependencies the design entails |
 | `get_blueprint(project_id)` | the entire design document |
-| `get_game_config(project_id)` | everything except level content — settings, system tuning + derived feel numbers, abilities, story variables, HUD — plus a `levels_summary` |
+| `get_game_config(project_id)` | project-wide *values*: settings, system tuning + derived feel numbers, abilities, story variables, HUD |
 | `get_level_design(level_id)` | one level: tile grid, entity coordinates, locations + connections, scenes (graph *and* Yarn), and the tile legend |
 | `list_entity_types(project_id)` | the level palette + the glyph legend |
 
 Start an engine build from the **`kickoff`** prompt, which briefs the agent to honor the
 design's numbers instead of substituting genre defaults.
+
+The manifest is a **map, not a route**. Its `depends_on` edges are entailments of what the
+creator authored (a locked exit needs its key; a scene needs its cast), never a build order
+this platform invented — sequencing is the agent's or the creator's call. See
+`api/services/manifest.py`.
+
+Every object carries a stable **address** (`entity:goomba`) to name it by and a content
+**hash** to version it. Addresses follow renames — the numeric `id` is the identity that
+doesn't — so an agent should key its own records on `id`, name engine artifacts after the
+address, and store the hash to detect later that a design changed under a finished build.
 
 ### Authoring the design
 

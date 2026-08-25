@@ -454,3 +454,60 @@ class DialogueEdge(models.Model):
 
     def __str__(self) -> str:
         return f"{self.from_node.title} -> {self.to_node.title}"
+
+
+class DesignAddress(models.Model):
+    """A stable, readable name for a design object — the shared word the platform, the
+    creator, and a building agent all use for the same thing.
+
+    Identity and name are deliberately separate. The object's numeric `id` is its identity
+    and never changes; the *address* (`entity:goomba`) is a name derived from the object's
+    own name, so renaming "Walker" to "Goomba" changes the address — and a building agent
+    should rename `Walker.tscn` to `Goomba.tscn` to match. A rename is a change to
+    propagate, not a break to survive.
+
+    Retired addresses are kept (`is_current=False`) so a reference an agent wrote down
+    earlier still resolves, and the answer can say "that's now called X". Resolution
+    prefers a current address: if a *new* object later takes a freed name, the live one
+    wins and the retired row only answers when nothing current holds it.
+
+    Rows are assigned lazily, when the export or manifest is built — nothing needs an
+    address before something reads the design, so no create endpoint has to know about it.
+    """
+
+    ENTITY = "entity"
+    LEVEL = "level"
+    LOCATION = "location"
+    SCENE = "scene"
+    CHARACTER = "character"
+    ABILITY = "ability"
+    OBJECT_TYPES = [ENTITY, LEVEL, LOCATION, SCENE, CHARACTER, ABILITY]
+
+    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="addresses")
+    object_type = models.CharField(max_length=20)
+    object_id = models.PositiveIntegerField()
+    slug = models.CharField(max_length=120)
+    is_current = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            # Only one object may hold a given name at a time; retired rows are exempt so
+            # the history can keep as many former names as it likes.
+            models.UniqueConstraint(
+                fields=["project", "object_type", "slug"],
+                condition=models.Q(is_current=True),
+                name="uniq_current_design_address",
+            )
+        ]
+        indexes = [
+            models.Index(fields=["project", "object_type", "object_id", "is_current"]),
+            models.Index(fields=["project", "object_type", "slug"]),
+        ]
+
+    @property
+    def address(self) -> str:
+        return f"{self.object_type}:{self.slug}"
+
+    def __str__(self) -> str:
+        return self.address if self.is_current else f"{self.address} (retired)"

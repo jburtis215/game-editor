@@ -731,6 +731,37 @@ async def _blueprint(project_id: int) -> dict[str, Any]:
 
 
 @mcp.tool()
+async def get_manifest(project_id: int) -> dict[str, Any]:
+    """**Read this first.** A map of the whole design — every object, one line each.
+
+    Each entry has a stable `address` (`entity:goomba`, `system:movement`,
+    `scene:the_handoff`) — the name to use for this thing everywhere, including in engine
+    filenames and when reporting work back — plus a one-phrase `summary`, a content `hash`,
+    and `depends_on`.
+
+    Use it to decide what to pull in full: this index is small, the objects behind it are
+    not. Then call get_level_design / get_game_config / list_entity_types for the parts you
+    actually need.
+
+    `depends_on` lists **facts of the design, not a build order**: an exit locked by
+    `state:item_cellar_key` can't be opened before something grants that key (see that
+    state entry's `granted_by`), an ability gated on a variable needs it declared, a scene
+    needs the characters it casts. Sequence the work however you or the creator prefer —
+    nothing here tells you which system to build first, on purpose.
+
+    `hash` fingerprints each object's design. Record it alongside whatever you build from
+    it; when the hash later differs, that object's design changed and the build is stale.
+    `project.hash` covers the whole design, so one comparison answers "did anything change?"
+
+    Addresses follow renames: if the creator renames "Walker" to "Goomba" the address
+    becomes `entity:goomba`, `former_addresses` records the old one, and the engine-side
+    artifact should be renamed to match. Key your own records on the object's numeric `id`,
+    which never changes.
+    """
+    return await client.get(f"/projects/{project_id}/manifest")
+
+
+@mcp.tool()
 async def get_blueprint(project_id: int) -> dict[str, Any]:
     """The complete game design as one `gameblueprint/0.1` document — read this to build the game.
 
@@ -753,10 +784,11 @@ async def get_blueprint(project_id: int) -> dict[str, Any]:
 
 @mcp.tool()
 async def get_game_config(project_id: int) -> dict[str, Any]:
-    """The project-wide design: settings, system tuning, abilities, story variables, HUD.
+    """The project-wide design *values*: settings, system tuning, abilities, story variables, HUD.
 
-    Everything from the blueprint except level content — the slice you need to scaffold a
-    project and set up its systems, and small enough to keep in context while you build.
+    The slice you need to scaffold a project and set up its systems. It deliberately does
+    not enumerate characters, entities or levels — get_manifest indexes those far more
+    cheaply, and list_entity_types / get_level_design pull them in full.
 
     `systems[id].derived` carries the numbers to implement (`jump_height_units`,
     `gravity_units_per_s2`, `hang_time_s`, `damage_per_hit`, `hits_to_die`) plus a
@@ -771,26 +803,12 @@ async def get_game_config(project_id: int) -> dict[str, Any]:
     return {
         "format": bp.get("format"),
         "project": bp.get("project"),
+        "hash": bp.get("hash"),
         "systems": bp.get("systems"),
         "abilities": bp.get("abilities"),
         "state_schema": bp.get("state_schema"),
         "yarn_declarations": bp.get("yarn_declarations"),
         "hud_layout": bp.get("hud_layout"),
-        "characters": bp.get("characters"),
-        "entity_types": bp.get("entity_types"),
-        "tile_legend": bp.get("tile_legend"),
-        "levels_summary": [
-            {
-                "id": level.get("id"),
-                "name": level.get("name"),
-                "order": level.get("order"),
-                "has_layout": bool(level.get("layout")),
-                "location_count": len(level.get("locations") or []),
-                "scene_count": len(level.get("scenes") or []),
-                "next_level_id": (level.get("on_complete") or {}).get("next_level_id"),
-            }
-            for level in bp.get("levels") or []
-        ],
     }
 
 
@@ -958,11 +976,15 @@ def kickoff_prompt(project_id: str, target: str = "") -> str:
 
 The design is already made. Your job is to implement it faithfully, not to redesign it.
 
-1. Read the plan first. Call get_game_config({project_id}) for the project-wide design —
-   settings, system tuning, abilities, story variables, HUD. Then get_level_design(level_id)
-   for the level you are building, and list_entity_types({project_id}) if you need the glyph
-   legend on its own. get_blueprint({project_id}) returns everything at once if the game is
-   small.
+1. Read the map first. Call get_manifest({project_id}) — one line per design object, with
+   the stable `address` you should use for it everywhere. Then pull only what you need:
+   get_game_config({project_id}) for project-wide values, get_level_design(level_id) for a
+   level, list_entity_types({project_id}) for the glyph legend. get_blueprint({project_id})
+   returns everything at once if the game is small.
+
+   `depends_on` in the manifest records what the design entails — a locked exit needs its
+   key to exist first — not an order we are prescribing. Build in whatever order you and the
+   creator choose.
 
 2. Honor the numbers. `systems[id].derived` holds the designer's tuned feel —
    `jump_height_units`, `gravity_units_per_s2`, `hang_time_s`, `damage_per_hit`,
@@ -983,6 +1005,13 @@ The design is already made. Your job is to implement it faithfully, not to redes
 5. **Never invent a value the design already answers.** If you need something the blueprint
    doesn't specify, list those gaps at the end rather than filling them silently — the
    creator would rather decide than discover your default later.
+
+6. Use the design's addresses as your own names. An object's `address` (`entity:goomba`)
+   is the shared word for it — name engine artifacts after it, and record each object's
+   `address`, numeric `id` and `hash` alongside what you build. The hash is how staleness
+   gets caught later: when the design changes, its hash changes. Key your records on `id`,
+   which survives renames; the address follows the creator's naming, so if it changed,
+   rename the artifact to match.
 
 Finish by summarizing what you built, the unit conversion you chose, and anything the design
 left unspecified."""

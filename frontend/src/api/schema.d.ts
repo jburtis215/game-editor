@@ -314,6 +314,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/projects/{project_id}/manifest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Index every design object with its address, hash and dependencies
+         * @description A map of the design, not a route through it: one line per object with its stable
+         *     address, a one-phrase summary, a content hash for staleness checks, and the
+         *     dependencies its own design implies (a locked exit needs its key; a scene needs its
+         *     cast). Small enough for a building agent to read first and then pull only what it
+         *     needs — see `api/services/manifest.py` for why no build *order* is asserted.
+         */
+        get: operations["api_api_project_manifest"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/abilities": {
         parameters: {
             query?: never;
@@ -2301,6 +2325,30 @@ export interface operations {
         };
     };
     api_api_export_project: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    api_api_project_manifest: {
         parameters: {
             query?: never;
             header?: never;
