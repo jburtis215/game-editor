@@ -22,13 +22,27 @@ Set `GAME_EDITOR_API_URL` if the API isn't at `http://127.0.0.1:8000/api`.
 
 ## Wire it into a client
 
-Claude Code (from the repo root):
+You normally register this from **the game project's directory** (a Godot project, say), not
+from this repo — that is where the agent doing the building runs.
+
+> **`PYTHONPATH` is required.** `python -m mcp_server` only resolves when `backend/` is on
+> `sys.path`, so running it from any other directory fails with `No module named mcp_server`.
+> Either set `PYTHONPATH` as below, or set the process's working directory to `backend/`.
+
+Claude Code — run this in the game project's directory:
 
 ```bash
-claude mcp add game-editor -- /absolute/path/to/backend/.venv/bin/python -m mcp_server
+claude mcp add game-editor \
+  -e PYTHONPATH=/absolute/path/to/backend \
+  -- /absolute/path/to/backend/.venv/bin/python -m mcp_server
 ```
 
-Claude Desktop (`claude_desktop_config.json`) or any other MCP client:
+Add `-s project` to write it to `.mcp.json` in that project instead of your local config, so
+it travels with the repo. Then `/mcp` inside Claude Code should show `game-editor` connected,
+and the server's prompts appear as `/mcp__game-editor__kickoff`.
+
+Claude Desktop (`claude_desktop_config.json`) or any other MCP client — `cwd` does the same
+job as `PYTHONPATH` here:
 
 ```json
 {
@@ -42,6 +56,9 @@ Claude Desktop (`claude_desktop_config.json`) or any other MCP client:
   }
 }
 ```
+
+**The Django API must be running** (`npm run dev:api`) — this server is an HTTP client of it
+and has no database access of its own.
 
 ## What it exposes
 
@@ -102,7 +119,8 @@ Characters and Abilities owned by the project):
 | --- | --- |
 | Projects | `list_projects`, `get_project`, `create_project`, `update_project` |
 | Abilities | `list_abilities`, `create_ability`, `update_ability` |
-| Levels | `list_levels`, `create_level`, `rename_level`, `list_level_cast` |
+| Levels | `list_levels`, `create_level`, `rename_level`, `set_level_layout`, `list_level_cast` |
+| Entity palette | `create_entity_type`, `update_entity_type`, `seed_entity_palette` |
 | Locations | `list_locations`, `create_location`, `update_location`, `connect_locations`, `place_character_at_location`, `generate_location_art` |
 | Scenes | `list_scenes`, `create_scene` |
 | Characters | `list_characters`, `get_character`, `create_character`, `update_character`, `relate_characters`, `generate_character_portrait` |
@@ -142,6 +160,10 @@ Characters and Abilities owned by the project):
   otherwise leave unlabeled variables in the UI.
 - Everything is read/create/update. No delete tools are exposed (only locations and relationships
   have DELETE endpoints anyway) — add them deliberately if an agent should be able to destroy work.
+- The conventions tell a builder to **greybox** — flat coloured rectangles, one cell each,
+  fixed colours per category — rather than stall on missing art. Entity `image_url` is
+  usually empty and is a short-lived presigned URL when it isn't, so it is never something a
+  build should depend on fetching.
 - `conventions.py` is prescriptive *only* where reconciliation needs it — file location,
   naming, units, and the sync manifest. If the agent lays a project out differently each
   session, a later sync pass can't tell "not built" from "not found", and the loop back from

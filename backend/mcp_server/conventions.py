@@ -31,7 +31,9 @@ GODOT: dict[str, Any] = {
         "These conventions exist so the design and the build can be compared later. Put "
         "things where this says, name them what this says, and keep game_editor_sync.json "
         "current — that is what lets the platform tell you later that a design changed "
-        "under something you already built."
+        "under something you already built. Build the greybox (see placeholder_art) rather "
+        "than waiting on art: the design specifies geometry and behaviour, and those are "
+        "playable on their own."
     ),
     "units": {
         "rule": (
@@ -156,6 +158,43 @@ GODOT: dict[str, Any] = {
         "effects": (
             "give_item/remember_choice -> vars[state_key] = true; remove_item -> false; "
             "set_flag -> vars[state_key] = `value`; change_stat -> vars[state_key] += `amount`."
+        ),
+    },
+    "placeholder_art": {
+        "rule": (
+            "Assume there is no art. Build the greybox and make it legible — never stop to "
+            "source or generate sprites, and never leave a node invisible because it has no "
+            "texture. A design that specifies geometry and behaviour is meant to be playable "
+            "before it is pretty."
+        ),
+        "how": (
+            "One ColorRect (or Polygon2D) per entity, exactly one cell — 32x32 px — centred "
+            "on its grid cell. Ground and platform tiles get a flat colour in the TileSet. "
+            "That is enough to see, test and tune the level."
+        ),
+        # Fixed so a greybox looks the same in every session. Consistency matters more than
+        # the specific colours: a build that changes appearance each run is one nobody can
+        # compare against the last one.
+        "colors": {
+            "ground (#)": "#3b3b46 dark slate",
+            "one-way platform (=)": "#6b6152 tan, visibly lighter than ground",
+            "player (P)": "#e5484d red",
+            "goal (G)": "#30a46c green",
+            "category enemy": "#e5484d red",
+            "category hazard": "#f76b15 orange",
+            "category pickup": "#ffc53d yellow",
+            "category prop": "#8b8d98 grey",
+            "background": "#12121a near-black",
+        },
+        "labels": (
+            "Put the entity's address on the node's name (`Goomba`, from `entity:goomba`) so "
+            "the scene tree reads as the design. A small Label over each placeholder helps "
+            "while greyboxing and costs nothing to remove later."
+        ),
+        "when_art_exists": (
+            "An entity's `image_url` in the export is a SHORT-LIVED presigned URL, not a "
+            "durable asset reference. If you use one, download it into the project as a real "
+            "file — never store the URL, and never make the build depend on fetching it."
         ),
     },
     "sync_manifest": {

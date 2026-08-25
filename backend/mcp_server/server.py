@@ -719,6 +719,117 @@ async def export_scene_yarn(scene_id: int) -> dict[str, Any]:
     return await client.get(f"/scenes/{scene_id}/export-yarn")
 
 
+# --- Level layout + entity palette (authoring the playable space) ------------------------------
+@mcp.tool()
+async def set_level_layout(
+    level_id: int, rows: list[str], intro_scene_id: int | None = None
+) -> dict[str, Any]:
+    """Paint a level's tile grid — the playable space itself.
+
+    `rows` is the level as ASCII, one character per cell, every row the same length.
+    `(0, 0)` is the **top-left** cell; x grows rightward and y grows **downward**, matching
+    Godot 2D, so there is no vertical flip anywhere in the pipeline. Width and height are
+    taken from `rows`.
+
+    Glyphs — `.` empty · `#` solid ground · `=` one-way platform (passable from below,
+    landable from above) · `P` player start · `G` goal. Every other character must be an
+    entity type's `glyph` in this project; create it with create_entity_type FIRST or the
+    save is rejected. Each level needs exactly one `P` and one `G` to be playable.
+
+    **One cell is one design unit.** A jump of `jump_height_units` (see get_game_config)
+    clears exactly that many cells, and `run_speed_units_per_s * hang_time_s` is roughly how
+    far the player travels in one jump — so check those numbers before deciding how wide a
+    gap or how tall a ledge should be. A level the player cannot cross is the easiest mistake
+    to make here.
+
+    Replaces the whole grid, so send the complete rows list. Pass `intro_scene_id` to also
+    set which dialogue scene plays when the level starts (it must be a scene of this level).
+    """
+    if not rows or not all(isinstance(r, str) for r in rows):
+        raise client.ApiError("rows must be a non-empty list of strings.")
+    width = len(rows[0])
+    ragged = [i for i, r in enumerate(rows) if len(r) != width]
+    if ragged:
+        raise client.ApiError(
+            f"Every row must be the same length. Row 0 is {width} characters; "
+            f"rows {ragged} differ."
+        )
+    payload: dict[str, Any] = {
+        "layout": {"width": width, "height": len(rows), "rows": rows}
+    }
+    if intro_scene_id is not None:
+        payload["intro_scene_id"] = intro_scene_id
+    return await client.request("PATCH", f"/levels/{level_id}", json=payload)
+
+
+@mcp.tool()
+async def create_entity_type(
+    project_id: int,
+    name: str,
+    glyph: str,
+    category: str = "enemy",
+    description: str = "",
+    behavior: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Add a placeable thing to the project's level palette, so it can be painted into a grid.
+
+    - `glyph` is ONE character, unique within the project, and may not be a built-in tile
+      (`.` `#` `=` `P` `G`). It is how this entity appears in a level's `rows`.
+    - `category` is `enemy`, `hazard`, `pickup` or `prop`.
+    - `behavior` is a bounded vocabulary, implemented literally by whoever builds the game:
+      `pattern` (`static` | `walk` | `patrol` | `fly`), `speed` in cells per second,
+      `harmful_on_touch` (bool), `stompable` (bool — jumping on top defeats it, the Mario
+      rule; when false, landing on it hurts instead).
+    - `description` is where everything the vocabulary can't express belongs, and a builder
+      is told to read it. "Breaks when hit from below", "turns at ledges but not walls",
+      "drops a coin when defeated" — write it here rather than inventing a new field.
+    """
+    return await client.post(
+        "/entities",
+        project_id=project_id,
+        name=name,
+        glyph=glyph,
+        category=category,
+        description=description,
+        behavior=behavior or {},
+    )
+
+
+@mcp.tool()
+async def update_entity_type(
+    entity_id: int,
+    name: str | None = None,
+    glyph: str | None = None,
+    category: str | None = None,
+    description: str | None = None,
+    behavior: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Change one entity type. Only the fields you pass are touched, but `behavior` replaces
+    the whole dict — read the current one first and merge rather than dropping keys.
+
+    Changing `glyph` does NOT rewrite levels that already use the old one, so repaint any
+    affected level with set_level_layout afterwards. Changing `name` changes the entity's
+    address (`entity:walker` becomes `entity:goomba`), which is intended — anyone who has
+    built it will be told to rename their engine artifact to match.
+    """
+    return await client.patch(
+        f"/entities/{entity_id}",
+        name=name,
+        glyph=glyph,
+        category=category,
+        description=description,
+        behavior=behavior,
+    )
+
+
+@mcp.tool()
+async def seed_entity_palette(project_id: int) -> list[dict[str, Any]]:
+    """Add the starter platformer palette — Walker `e`, Spikes `^`, Coin `o` — and return the
+    project's whole palette. Idempotent: anything whose name or glyph is already taken is
+    skipped, so it is safe on a project that has some of them."""
+    return await client.post(f"/projects/{project_id}/seed-entities")
+
+
 # --- Reading the design (the build side: slices of the gameblueprint export) -------------------
 # These wrap GET /projects/{id}/export — the canonical assembled document — rather than
 # re-deriving anything, so every slice agrees with every other. The export is cheap and
@@ -880,6 +991,9 @@ async def list_entity_types(project_id: int) -> dict[str, Any]:
 
     `tile_legend` merges these glyphs with the five built-in tiles, so it is the complete
     key for any level's grid.
+
+    `image_url` is usually empty, and that is fine — build the greybox. See
+    get_engine_conventions for the placeholder shape and per-category colours.
     """
     bp = await _blueprint(project_id)
     return {"entity_types": bp.get("entity_types"), "tile_legend": bp.get("tile_legend")}
@@ -1097,12 +1211,17 @@ The design is already made. Your job is to implement it faithfully, not to redes
    "unit" is one cell of the level grid, so a 3-unit jump clears a 3-cell wall. Convert with
    the conventions' pixels-per-cell, once, and say which value you used.
 
-4. Build each level from `layout.rows` exactly: `(0,0)` is top-left and y grows downward,
+4. Expect no art. Build the greybox the conventions describe — flat coloured rectangles,
+   one cell each — and keep going. Do not stop to source or generate sprites, and do not
+   leave anything invisible; a design that specifies geometry and behaviour is playable
+   before it is pretty.
+
+5. Build each level from `layout.rows` exactly: `(0,0)` is top-left and y grows downward,
    which matches Godot 2D, so there is no vertical flip. Implement each entity's `behavior`
    dict (`pattern`, `speed`, `harmful_on_touch`, `stompable`) as written; anything it can't
    express is in `description`, so read that too.
 
-5. Report each object as you finish it: call report_built({project_id}, address, engine_path,
+6. Report each object as you finish it: call report_built({project_id}, address, engine_path,
    hash) with the object's `hash` from the manifest, and write the same three facts into
    `game_editor_sync.json`. The platform can't see your project, so unreported work is
    invisible to the creator — and the hash is what later tells them they changed a design
@@ -1112,7 +1231,7 @@ The design is already made. Your job is to implement it faithfully, not to redes
    it says what exists, what went `stale` (design changed since you built it) and what was
    `renamed` (rename the artifact to match).
 
-6. **Never invent a value the design already answers.** If you need something the design
+7. **Never invent a value the design already answers.** If you need something the design
    doesn't specify, collect those gaps and list them at the end rather than filling them
    silently — the creator would rather decide than discover your default later.
 

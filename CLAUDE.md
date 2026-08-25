@@ -395,13 +395,19 @@ scenes · characters · character traits · story state · dialogue, incl.
 `import_scene_yarn`/`export_scene_yarn`, plus the world layer
 `connect_locations`/`update_location`/`generate_location_art` and the action layer
 `list_abilities`/`create_ability`/`update_ability`) — driven by the `build-game` prompt.
+Authoring gained `set_level_layout` (paints `Level.layout`; the API validates row
+lengths and rejects glyphs with no matching entity type) and
+`create_entity_type`/`update_entity_type`/`seed_entity_palette`, without which an agent
+could create a level but never make it playable.
 **Reading the design** — `get_manifest` (the index, and the intended first read),
 `get_blueprint`, `get_game_config`, `get_level_design`, `list_entity_types`, plus
 `get_engine_conventions` (`mcp_server/conventions.py` — how a design object becomes a real
 file: units, file layout, node types, tile semantics, entity behavior, the
 `game_editor_sync.json` record; **Godot only**, deliberately) — for an agent *building* the
-game in an engine, driven by the `kickoff` prompt. The conventions are prescriptive only
-where reconciliation needs them: a layout that varies per session makes "not built"
+game in an engine, driven by the `kickoff` prompt. The conventions also specify a
+**greybox** (flat colour per category, one cell each) so a builder never stalls on missing
+art — entity `image_url` is usually empty, and is a short-lived presigned URL when it isn't.
+The conventions are prescriptive only where reconciliation needs them: a layout that varies per session makes "not built"
 indistinguishable from "not found".
 **Reporting the build back** — `report_built` (call per object, passing the design hash it
 was built from) and `get_build_status` (resume a session; see what went stale or got
