@@ -22,7 +22,7 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
-from . import client
+from . import client, conventions
 
 mcp = FastMCP(
     "game-editor",
@@ -731,6 +731,28 @@ async def _blueprint(project_id: int) -> dict[str, Any]:
 
 
 @mcp.tool()
+async def get_engine_conventions(engine: str = "godot") -> dict[str, Any]:
+    """How this design maps onto real files in a game engine. **Read before building.**
+
+    Covers the unit conversion (one grid cell = one design unit = a fixed number of
+    pixels, which is what makes the designer's jump height and gravity mean something),
+    where each kind of object goes, which node type it becomes, how the tile glyphs
+    translate, how to implement each entity behavior, what to do about dialogue, and the
+    `game_editor_sync.json` you should keep alongside the build.
+
+    These are prescribed for one reason: a later sync pass has to be able to find what you
+    built and compare it to the design. Layout that changes session to session makes "not
+    built" and "not found" the same answer. Within that, code structure and art are yours.
+
+    Only Godot is covered so far.
+    """
+    try:
+        return conventions.for_engine(engine)
+    except KeyError as exc:
+        raise client.ApiError(str(exc)) from exc
+
+
+@mcp.tool()
 async def get_manifest(project_id: int) -> dict[str, Any]:
     """**Read this first.** A map of the whole design — every object, one line each.
 
@@ -939,6 +961,16 @@ async def scene_yarn_resource(scene_id: str) -> str:
     """A scene's dialogue graph as Yarn script — the readable form of the whole conversation."""
     return (await client.get(f"/scenes/{scene_id}/export-yarn"))["text"]
 
+@mcp.resource(
+    "game-editor://conventions/{engine}",
+    name="Engine conventions",
+    mime_type="application/json",
+)
+async def conventions_resource(engine: str) -> dict[str, Any]:
+    """How design objects map onto files in a given engine — the same content as the
+    get_engine_conventions tool. Only `godot` is covered so far."""
+    return conventions.for_engine(engine)
+
 
 # --- Prompts ----------------------------------------------------------------------------------
 @mcp.prompt(name="build-game", title="Build a game from a pitch")
@@ -971,50 +1003,56 @@ Ask before deleting or overwriting anything that already exists."""
 @mcp.prompt(name="kickoff", title="Build a game from its blueprint")
 def kickoff_prompt(project_id: str, target: str = "") -> str:
     """Brief the agent to build an already-designed game in an engine, from the blueprint."""
-    engine = f" in {target}" if target else ""
-    return f"""Build project {project_id}{engine} from its design in game-editor.
+    engine = (target or "godot").strip().lower()
+    known = engine in conventions.ENGINES
+    engine_step = (
+        f"Call get_engine_conventions('{engine}') — it says exactly where each kind of "
+        "object goes, what node type it becomes, how the tile glyphs translate, and the "
+        "pixels-per-cell constant that makes the design's numbers mean something."
+        if known
+        else (
+            f"No conventions exist for '{target}' yet — only Godot. Agree a file layout and "
+            "unit scale with the creator BEFORE building, and write it down, because a later "
+            "sync pass has to be able to find what you built."
+        )
+    )
+    return f"""Build project {project_id} in {target or "Godot"} from its design in game-editor.
 
 The design is already made. Your job is to implement it faithfully, not to redesign it.
 
-1. Read the map first. Call get_manifest({project_id}) — one line per design object, with
-   the stable `address` you should use for it everywhere. Then pull only what you need:
+1. Read the map. Call get_manifest({project_id}) — one line per design object, each with the
+   stable `address` to use for it everywhere. Then pull only what you need:
    get_game_config({project_id}) for project-wide values, get_level_design(level_id) for a
    level, list_entity_types({project_id}) for the glyph legend. get_blueprint({project_id})
    returns everything at once if the game is small.
 
-   `depends_on` in the manifest records what the design entails — a locked exit needs its
-   key to exist first — not an order we are prescribing. Build in whatever order you and the
-   creator choose.
+   `depends_on` records what the design entails — a locked exit needs its key to exist
+   first — not an order we are prescribing. Build in whatever order you and the creator
+   choose; if the creator told you where to start, start there.
 
-2. Honor the numbers. `systems[id].derived` holds the designer's tuned feel —
+2. Read the conventions. {engine_step}
+
+3. Honor the numbers. `systems[id].derived` holds the designer's tuned feel —
    `jump_height_units`, `gravity_units_per_s2`, `hang_time_s`, `damage_per_hit`,
-   `hits_to_die` — and each carries a `takeaway` sentence saying what that should feel like.
-   One "unit" is one cell of the level grid, so a 3-unit jump clears a 3-cell wall. Convert
-   units to your engine's scale once, consistently, and say what factor you used.
+   `hits_to_die` — each with a `takeaway` sentence saying what it should feel like. One
+   "unit" is one cell of the level grid, so a 3-unit jump clears a 3-cell wall. Convert with
+   the conventions' pixels-per-cell, once, and say which value you used.
 
-3. Build the level from `layout.rows` exactly: `(0,0)` is top-left, y grows downward. `#` is
-   solid, `=` is a one-way platform (collidable from above only), `P` is the player start,
-   `G` is the goal, and every other glyph is an entity type — implement its `behavior` dict
-   (`pattern`, `speed`, `harmful_on_touch`, `stompable`) as written.
+4. Build each level from `layout.rows` exactly: `(0,0)` is top-left and y grows downward,
+   which matches Godot 2D, so there is no vertical flip. Implement each entity's `behavior`
+   dict (`pattern`, `speed`, `harmful_on_touch`, `stompable`) as written; anything it can't
+   express is in `description`, so read that too.
 
-4. For dialogue, each scene carries ready-to-compile `yarn`. Write the project's
-   `yarn_declarations` block to one file and the per-scene Yarn beside it — the scene text
-   omits `<<declare>>` lines on purpose, because duplicate declarations across files are a
-   compile error.
+5. Record what you built in `game_editor_sync.json` as you go — address, numeric id, path,
+   and the object's `hash` at the time you built it. That file is what lets the design and
+   the build be compared later; a build nobody wrote down can't be checked.
 
-5. **Never invent a value the design already answers.** If you need something the blueprint
-   doesn't specify, list those gaps at the end rather than filling them silently — the
-   creator would rather decide than discover your default later.
+6. **Never invent a value the design already answers.** If you need something the design
+   doesn't specify, collect those gaps and list them at the end rather than filling them
+   silently — the creator would rather decide than discover your default later.
 
-6. Use the design's addresses as your own names. An object's `address` (`entity:goomba`)
-   is the shared word for it — name engine artifacts after it, and record each object's
-   `address`, numeric `id` and `hash` alongside what you build. The hash is how staleness
-   gets caught later: when the design changes, its hash changes. Key your records on `id`,
-   which survives renames; the address follows the creator's naming, so if it changed,
-   rename the artifact to match.
-
-Finish by summarizing what you built, the unit conversion you chose, and anything the design
-left unspecified."""
+Finish by summarizing what you built, the pixels-per-cell you used, and every gap you had to
+leave open."""
 
 if __name__ == "__main__":
     mcp.run()

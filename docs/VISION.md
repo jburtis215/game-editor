@@ -221,8 +221,23 @@ actionable steps in `CREATIVE-LEVERS.md`; the items below are its prerequisites.
 ### Phase 4 — Build truth flows back (activates the supervisor)
 *Now unblocked by addresses + hashes: an agent can finally name the thing it built and say
 which version of the design it built from. Godot is the only target for now — deliberately,
-since engine-specific conventions in the `kickoff` prompt do more for the agent's efficiency
-than any additional data we could serve.*
+since engine-specific conventions do more for the agent's efficiency than any additional
+data we could serve.*
+
+- [x] **Godot conventions** (Aug 2026, `mcp_server/conventions.py` +
+      `get_engine_conventions`): units (one cell = one design unit = 32 px, so the derived
+      numbers convert mechanically), file layout per address type, node types, tile
+      semantics (`=` is a one-way *tile property*; `P`/`G` are not tiles), entity behavior,
+      and `game_editor_sync.json`. Prescriptive **only** where reconciliation needs it —
+      a layout that varies session to session makes "not built" indistinguishable from
+      "not found", which silently breaks the return half of the loop.
+- [x] **Dialogue runtime decided**: a small GDScript player over the `dialogue` graph, not
+      Yarn Spinner — the official GDScript port requires Godot 4.6+ and is alpha ("we do not
+      recommend you use this to ship a game just yet") and the C# port is an unsupported beta
+      needing the .NET build. The `.yarn` files are still written, so adopting the addon
+      later is a drop-in. This only works because the export carries dialogue in *both*
+      forms, and the runner is small only because the requirement/effect vocabulary was
+      bounded in the first place.
 
 - [ ] `report_built(address, engine_path, hash)` — the write half of the loop. Gives
       build status, the % rollup, and staleness detection together: an object whose current
@@ -254,8 +269,9 @@ than any additional data we could serve.*
 as the Phase-1 validation environment. Fortnite and Roblox are the long-term reach
 targets and should both be covered eventually.*
 
-- [ ] Godot demo: agent + MCP server scaffold a playable scene from the blueprint
-      (dialogue via Yarn Spinner, systems as generated config/resources).
+- [ ] Godot demo: agent + MCP server scaffold a playable scene from the blueprint (systems
+      as a generated config autoload, dialogue via the GDScript runner — see Phase 4).
+      Target: **Godot 4.4**, the platformer project.
 - [ ] Verse/UEFN codegen prototype off the Phase-1 export: `game_config.verse`
       (systems → typed constants/classes) + dialogue → Verse state machine. Scope
       honestly: creators wire generated modules to devices themselves; no custom

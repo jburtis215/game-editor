@@ -396,8 +396,13 @@ scenes · characters · character traits · story state · dialogue, incl.
 `connect_locations`/`update_location`/`generate_location_art` and the action layer
 `list_abilities`/`create_ability`/`update_ability`) — driven by the `build-game` prompt.
 **Reading the design** — `get_manifest` (the index, and the intended first read),
-`get_blueprint`, `get_game_config`, `get_level_design`, `list_entity_types` — for an agent
-*building* the game in an engine, driven by the `kickoff` prompt. The read tools all wrap `GET /api/projects/{id}/export` and slice it rather than
+`get_blueprint`, `get_game_config`, `get_level_design`, `list_entity_types`, plus
+`get_engine_conventions` (`mcp_server/conventions.py` — how a design object becomes a real
+file: units, file layout, node types, tile semantics, entity behavior, the
+`game_editor_sync.json` record; **Godot only**, deliberately) — for an agent *building* the
+game in an engine, driven by the `kickoff` prompt. The conventions are prescriptive only
+where reconciliation needs them: a layout that varies per session makes "not built"
+indistinguishable from "not found". The read tools all wrap `GET /api/projects/{id}/export` and slice it rather than
 re-deriving anything, so no two can disagree; they refetch per call (no caching) so an agent
 never builds from a design the creator has since changed. Four resources
 (`game-editor://projects`, `…/projects/{id}` = a blueprint-derived overview,

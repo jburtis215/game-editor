@@ -61,6 +61,7 @@ slices can disagree, and each refetches so the agent never builds from a stale d
 | `get_game_config(project_id)` | project-wide *values*: settings, system tuning + derived feel numbers, abilities, story variables, HUD |
 | `get_level_design(level_id)` | one level: tile grid, entity coordinates, locations + connections, scenes (graph *and* Yarn), and the tile legend |
 | `list_entity_types(project_id)` | the level palette + the glyph legend |
+| `get_engine_conventions(engine)` | how design objects become real files — layout, node types, tile semantics, units, sync manifest. Godot only so far |
 
 Start an engine build from the **`kickoff`** prompt, which briefs the agent to honor the
 design's numbers instead of substituting genre defaults.
@@ -100,12 +101,16 @@ Characters and Abilities owned by the project):
   Built from the blueprint, with dialogue graphs summarized rather than inlined
 - `game-editor://projects/{project_id}/blueprint` — the full `gameblueprint/0.1` document
 - `game-editor://scenes/{scene_id}/yarn` — a scene's dialogue graph as Yarn script
+- `game-editor://conventions/{engine}` — the engine conventions above
 
 **Prompts**:
 
 - `kickoff(project_id, target?)` — build an already-designed game in an engine from its
-  blueprint. Names the unit convention, the glyph semantics, the Yarn declare split, and the
-  rule that matters most: never invent a value the design already answers.
+  blueprint. Points at the manifest and the engine conventions, insists on the design's
+  numbers, requires the build be recorded in `game_editor_sync.json`, and carries the rule
+  that matters most: never invent a value the design already answers. When `target` is an
+  engine with no conventions yet, it says so and tells the agent to agree a layout with the
+  creator first rather than improvising one.
 - `build-game(pitch, project_id?)` — the other direction: walk an agent from a one-line pitch
   through settings → characters → levels/scenes → dialogue.
 
@@ -120,6 +125,15 @@ Characters and Abilities owned by the project):
   otherwise leave unlabeled variables in the UI.
 - Everything is read/create/update. No delete tools are exposed (only locations and relationships
   have DELETE endpoints anyway) — add them deliberately if an agent should be able to destroy work.
+- `conventions.py` is prescriptive *only* where reconciliation needs it — file location,
+  naming, units, and the sync manifest. If the agent lays a project out differently each
+  session, a later sync pass can't tell "not built" from "not found", and the loop back from
+  engine to design stops working. Code structure and art are deliberately left alone.
+- **Dialogue is intentionally not on Yarn Spinner yet.** The official GDScript port needs
+  Godot 4.6+ and is alpha ("we do not recommend you use this to ship a game just yet"); the
+  C# port is an unsupported beta needing the .NET build. The conventions have the agent build
+  a small GDScript player against the `dialogue` graph while still writing the `.yarn` files,
+  so adopting the addon later is a drop-in.
 - The read tools deliberately **wrap the export** instead of composing REST calls. One assembly
   path means the schema contract is enforced in one place (`api/services/blueprint.py`), and a
   new field reaches every tool at once. The cost is that a slice fetches the whole document;
