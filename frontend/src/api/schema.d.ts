@@ -338,6 +338,53 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/projects/{project_id}/build-reports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Record what an agent built for one design object
+         * @description The write half of the loop. The platform can't see inside an engine project, so this
+         *     is the only way it learns something exists. Recording the design `hash` it was built
+         *     from is what lets the platform notice later, on its own, that the design has changed
+         *     underneath it. Rejects an address that names nothing in the project — an invented
+         *     address would file a report nothing can ever match.
+         */
+        post: operations["api_api_report_build"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{project_id}/build-status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * What has been built, what is stale, and the rollup
+         * @description Every design object with its build state. `stale` means the design changed after the
+         *     object was built; `renamed` means the creator renamed it since, so the engine artifact
+         *     is named wrong. Both are derived at read time — a stored staleness flag would itself
+         *     need invalidating whenever the design changed, which is the bug it exists to catch.
+         */
+        get: operations["api_api_get_build_status"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/abilities": {
         parameters: {
             query?: never;
@@ -1089,6 +1136,40 @@ export interface components {
             character_traits?: {
                 [key: string]: unknown;
             }[] | null;
+        };
+        /**
+         * BuildReportIn
+         * @description One object an agent built in an engine. `address` comes from the manifest; `hash` is
+         *     the design hash it was built from, and is what later makes staleness detectable.
+         */
+        BuildReportIn: {
+            /** Address */
+            address: string;
+            /**
+             * Engine Path
+             * @default
+             */
+            engine_path: string;
+            /**
+             * Hash
+             * @default
+             */
+            hash: string;
+            /**
+             * Status
+             * @default built
+             */
+            status: string;
+            /**
+             * Engine
+             * @default godot
+             */
+            engine: string;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
         };
         /**
          * AbilityOut
@@ -2351,6 +2432,69 @@ export interface operations {
     api_api_project_manifest: {
         parameters: {
             query?: never;
+            header?: never;
+            path: {
+                project_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    api_api_report_build: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BuildReportIn"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    api_api_get_build_status: {
+        parameters: {
+            query?: {
+                engine?: string;
+            };
             header?: never;
             path: {
                 project_id: number;

@@ -11,12 +11,21 @@ from django.shortcuts import get_object_or_404
 from ninja import File, NinjaAPI, Schema
 from ninja.files import UploadedFile
 
-from .services import blueprint, imagegen, manifest, storage, yarn_export, yarn_import
+from .services import (
+    blueprint,
+    build_reports,
+    imagegen,
+    manifest,
+    storage,
+    yarn_export,
+    yarn_import,
+)
 
 from typing import Any
 
 from .models import (
     Ability,
+    BuildRecord,
     Character,
     CharacterRelationship,
     Dialogue,
@@ -865,6 +874,17 @@ def update_project(request, project_id: int, payload: ProjectUpdateIn):
     return project
 
 
+class BuildReportIn(Schema):
+    """One object an agent built in an engine. `address` comes from the manifest; `hash` is
+    the design hash it was built from, and is what later makes staleness detectable."""
+
+    address: str
+    engine_path: str = ""
+    hash: str = ""  # the object's design hash at build time
+    status: str = "built"  # in_progress | built | verified
+    engine: str = "godot"
+    note: str = ""
+
 @api.get(
     "/projects/{int:project_id}/export",
     response=dict,
@@ -892,6 +912,46 @@ def project_manifest(request, project_id: int):
     needs — see `api/services/manifest.py` for why no build *order* is asserted."""
     project = get_object_or_404(Project, id=project_id)
     return manifest.build_manifest(project)
+
+
+@api.post(
+    "/projects/{int:project_id}/build-reports",
+    response={200: dict, 400: Error},
+    summary="Record what an agent built for one design object",
+)
+def report_build(request, project_id: int, payload: BuildReportIn):
+    """The write half of the loop. The platform can't see inside an engine project, so this
+    is the only way it learns something exists. Recording the design `hash` it was built
+    from is what lets the platform notice later, on its own, that the design has changed
+    underneath it. Rejects an address that names nothing in the project — an invented
+    address would file a report nothing can ever match."""
+    project = get_object_or_404(Project, id=project_id)
+    try:
+        return 200, build_reports.record_build(
+            project,
+            address=payload.address,
+            engine_path=payload.engine_path,
+            built_hash=payload.hash,
+            status=payload.status,
+            engine=payload.engine,
+            note=payload.note,
+        )
+    except build_reports.ReportError as exc:
+        return 400, {"error": str(exc)}
+
+
+@api.get(
+    "/projects/{int:project_id}/build-status",
+    response=dict,
+    summary="What has been built, what is stale, and the rollup",
+)
+def get_build_status(request, project_id: int, engine: str = "godot"):
+    """Every design object with its build state. `stale` means the design changed after the
+    object was built; `renamed` means the creator renamed it since, so the engine artifact
+    is named wrong. Both are derived at read time — a stored staleness flag would itself
+    need invalidating whenever the design changed, which is the bug it exists to catch."""
+    project = get_object_or_404(Project, id=project_id)
+    return build_reports.build_status(project, engine=engine)
 
 
 # --- Abilities (the player's verb set) --------------------------------------------------------

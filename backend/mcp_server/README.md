@@ -76,6 +76,23 @@ Every object carries a stable **address** (`entity:goomba`) to name it by and a 
 doesn't — so an agent should key its own records on `id`, name engine artifacts after the
 address, and store the hash to detect later that a design changed under a finished build.
 
+### Reporting the build back
+
+The platform can't see inside an engine project — no daemons, no plugins, agent-mediated
+only — so these are the only way it learns anything was built.
+
+| Tool | Does |
+| --- | --- |
+| `report_built(project_id, address, engine_path, hash, status?)` | records one built object against the design `hash` it was built from |
+| `get_build_status(project_id)` | what's built, what's `stale` (design changed since), what's `renamed`, and `percent_built` |
+
+The `hash` is the point. Once an object is reported as built against one, the platform can
+tell **on its own** that the creator has since changed that object — no engine access, no
+reconcile pass. `percent_built` counts only objects that are built *and* current, so a
+stale build reads as work still owed. Staleness and renames are derived at read time, never
+stored: a stored flag would need invalidating every time the design changed, which is the
+bug it exists to catch.
+
 ### Authoring the design
 
 Grouped the way the data model nests (Project → Level → Location/Scene → Dialogue, with

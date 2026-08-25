@@ -885,6 +885,65 @@ async def list_entity_types(project_id: int) -> dict[str, Any]:
     return {"entity_types": bp.get("entity_types"), "tile_legend": bp.get("tile_legend")}
 
 
+# --- Reporting the build back (the write half of the loop) ------------------------------------
+@mcp.tool()
+async def report_built(
+    project_id: int,
+    address: str,
+    engine_path: str = "",
+    hash: str = "",
+    status: str = "built",
+    engine: str = "godot",
+    note: str = "",
+) -> dict[str, Any]:
+    """Tell the platform you built something. **Call this as you finish each object.**
+
+    The platform cannot see inside your engine project — there are no daemons and no
+    plugins, by design — so this report is the only way it learns the thing exists. Work you
+    don't report is indistinguishable from work never done.
+
+    - `address` must come from get_manifest. An invented address is rejected, because a
+      report nothing can match would look like unbuilt work forever.
+    - `hash` is that object's `hash` at the time you built it. **Always pass it.** It is what
+      lets the creator be told later that they changed the design after you built it —
+      without you, or anyone, re-reading the code.
+    - `engine_path` is where it lives (`res://entities/goomba.tscn`).
+    - `status` is `in_progress`, `built` (default), or `verified` (you ran it and saw it work).
+
+    Reporting the same object again updates the existing record, so it is safe to call after
+    every revision. The reply tells you if the object is already stale, or if the creator has
+    renamed it since — in which case rename the engine artifact and your sync manifest to
+    match.
+    """
+    return await client.post(
+        f"/projects/{project_id}/build-reports",
+        address=address,
+        engine_path=engine_path,
+        hash=hash,
+        status=status,
+        engine=engine,
+        note=note,
+    )
+
+
+@mcp.tool()
+async def get_build_status(project_id: int, engine: str = "godot") -> dict[str, Any]:
+    """What has been built so far, what has gone stale, and how much of the design is done.
+
+    Read this at the **start of a session** to pick up where the last one left off, and
+    whenever you want to know what changed since.
+
+    Per object: `status` (not_built / in_progress / built / verified), `stale` (the design
+    changed after it was built — re-read it and update the build), and `renamed` (the
+    creator renamed it, so the engine artifact and your sync manifest entry are named wrong).
+
+    `summary.percent_built` counts only objects that are built **and** current — a stale
+    build is work still owed, not work finished. `orphaned_reports` lists things you built
+    whose design object has since been deleted; those files are now unowned.
+    """
+    return await client.get(f"/projects/{project_id}/build-status", engine=engine)
+
+
 # --- Resources (read-only context the agent can pull in) --------------------------------------
 @mcp.resource("game-editor://projects", name="Projects", mime_type="application/json")
 async def projects_resource() -> list[dict[str, Any]]:
@@ -1043,9 +1102,15 @@ The design is already made. Your job is to implement it faithfully, not to redes
    dict (`pattern`, `speed`, `harmful_on_touch`, `stompable`) as written; anything it can't
    express is in `description`, so read that too.
 
-5. Record what you built in `game_editor_sync.json` as you go — address, numeric id, path,
-   and the object's `hash` at the time you built it. That file is what lets the design and
-   the build be compared later; a build nobody wrote down can't be checked.
+5. Report each object as you finish it: call report_built({project_id}, address, engine_path,
+   hash) with the object's `hash` from the manifest, and write the same three facts into
+   `game_editor_sync.json`. The platform can't see your project, so unreported work is
+   invisible to the creator — and the hash is what later tells them they changed a design
+   you had already built.
+
+   If you are resuming, start with get_build_status({project_id}) instead of rebuilding:
+   it says what exists, what went `stale` (design changed since you built it) and what was
+   `renamed` (rename the artifact to match).
 
 6. **Never invent a value the design already answers.** If you need something the design
    doesn't specify, collect those gaps and list them at the end rather than filling them

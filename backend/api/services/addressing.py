@@ -157,6 +157,51 @@ def resolve(project: Project, address: str) -> dict[str, Any] | None:
     }
 
 
+def resolve_any(project: Project, address: str) -> dict[str, Any] | None:
+    """`resolve()` extended to every address type, including the ones with no row.
+
+    `system:` / `state:` / `dialogue:` addresses are checked against the design itself
+    (the project's systems, its state schema, dialogue titles) since their names are
+    already stable keys. Returns None when the address names nothing in this project —
+    which is the signal that a consumer invented an address rather than reading one.
+    """
+    if ":" not in (address or ""):
+        return None
+    kind, _, name = address.partition(":")
+
+    if kind in RENAMEABLE_TYPES:
+        return resolve(project, address)
+
+    if kind == "system":
+        if name in (project.systems or {}):
+            return {"object_type": "system", "object_id": None, "address": address,
+                    "current": address, "renamed_from": None}
+        return None
+
+    if kind == "state":
+        if name in (project.state_schema or {}):
+            return {"object_type": "state", "object_id": None, "address": address,
+                    "current": address, "renamed_from": None}
+        return None
+
+    if kind == "dialogue":
+        from ..models import Dialogue
+
+        node = Dialogue.objects.filter(scene__level__project=project, title=name).first()
+        if node is not None:
+            return {"object_type": "dialogue", "object_id": node.id, "address": address,
+                    "current": address, "renamed_from": None}
+        return None
+
+    if kind == "project":
+        if address == project_address(project.name):
+            return {"object_type": "project", "object_id": project.id, "address": address,
+                    "current": address, "renamed_from": None}
+        return None
+
+    return None
+
+
 # --- Addresses for the types that don't need a row --------------------------------------
 
 

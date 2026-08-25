@@ -402,7 +402,10 @@ file: units, file layout, node types, tile semantics, entity behavior, the
 `game_editor_sync.json` record; **Godot only**, deliberately) — for an agent *building* the
 game in an engine, driven by the `kickoff` prompt. The conventions are prescriptive only
 where reconciliation needs them: a layout that varies per session makes "not built"
-indistinguishable from "not found". The read tools all wrap `GET /api/projects/{id}/export` and slice it rather than
+indistinguishable from "not found".
+**Reporting the build back** — `report_built` (call per object, passing the design hash it
+was built from) and `get_build_status` (resume a session; see what went stale or got
+renamed). The read tools all wrap `GET /api/projects/{id}/export` and slice it rather than
 re-deriving anything, so no two can disagree; they refetch per call (no caching) so an agent
 never builds from a design the creator has since changed. Four resources
 (`game-editor://projects`, `…/projects/{id}` = a blueprint-derived overview,

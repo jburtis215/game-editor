@@ -511,3 +511,58 @@ class DesignAddress(models.Model):
 
     def __str__(self) -> str:
         return self.address if self.is_current else f"{self.address} (retired)"
+
+
+class BuildRecord(models.Model):
+    """What an agent reported building, and which version of the design it built from.
+
+    The write half of the design→build→design loop. The platform has no view into an engine
+    project (no daemons, no plugins — agent-mediated only), so this is the only way it
+    learns that something exists. A build nobody reported is indistinguishable from one that
+    was never made.
+
+    `built_hash` is the point of the whole thing: it records the design's content hash at
+    the moment the object was built, so when the designer later edits that object its hash
+    changes and the build is detectably **stale** — with no engine access and no reconcile
+    pass. Staleness is derived at read time rather than stored, so it can never itself go
+    stale.
+
+    Identity is stored twice on purpose. `object_type`/`object_id` is the durable key and
+    survives renames; `address` is what was reported and is kept so a rename can be surfaced
+    as "the artifact needs renaming too". Types with no row of their own (`system:`,
+    `state:`) resolve to a null `object_id` and are matched on address, which for those
+    types never changes.
+    """
+
+    IN_PROGRESS = "in_progress"
+    BUILT = "built"
+    VERIFIED = "verified"
+    STATUS_CHOICES = [
+        (IN_PROGRESS, "In progress"),
+        (BUILT, "Built"),
+        (VERIFIED, "Verified"),
+    ]
+
+    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="build_records")
+    engine = models.CharField(max_length=30, default="godot")
+    address = models.CharField(max_length=200)
+    object_type = models.CharField(max_length=20)
+    object_id = models.PositiveIntegerField(null=True, blank=True)
+    engine_path = models.CharField(max_length=500, blank=True, default="")
+    built_hash = models.CharField(max_length=64, blank=True, default="")
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=BUILT)
+    note = models.TextField(blank=True, default="")
+    reported_at = models.DateTimeField(auto_now=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["address"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["project", "engine", "address"], name="uniq_build_record_address"
+            )
+        ]
+        indexes = [models.Index(fields=["project", "engine", "object_type", "object_id"])]
+
+    def __str__(self) -> str:
+        return f"{self.address} -> {self.engine_path or '(no path)'} [{self.status}]"

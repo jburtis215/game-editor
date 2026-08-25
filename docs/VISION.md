@@ -239,12 +239,18 @@ data we could serve.*
       forms, and the runner is small only because the requirement/effect vocabulary was
       bounded in the first place.
 
-- [ ] `report_built(address, engine_path, hash)` — the write half of the loop. Gives
-      build status, the % rollup, and staleness detection together: an object whose current
-      hash differs from the one it was built against is stale, detectable with no engine
-      access at all.
-- [ ] `build_status` on design objects: designed / in-progress / built / verified, mostly
-      derived from `report_built` rather than set by hand.
+- [x] `report_built(address, engine_path, hash)` (Aug 2026) — the write half of the loop,
+      plus `get_build_status`. Staleness works exactly as hoped: an object whose design hash
+      differs from the one it was built against is stale, detected with **no engine access
+      at all**. Renames surface the same way — the record follows the object, so a build
+      filed under an old address reports back that the engine artifact needs renaming.
+      An address that names nothing is rejected, so an invented address can't file a report
+      nothing will ever match.
+- [x] `build_status`: not_built / in_progress / built / verified, derived from the reports
+      rather than set by hand, with `stale` and `renamed` computed at read time.
+      `percent_built` counts only built-**and**-current objects — a stale build is work still
+      owed. Orphaned reports (design object deleted, engine file left behind) are surfaced
+      rather than hidden.
 - [ ] **Policy — decided:** engine changes that *contradict* the design arrive as pending
       deviations the creator accepts or rejects. Values the design never specified (the
       agent had to invent one) are recorded as design, flagged as originating in the build —
