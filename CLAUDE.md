@@ -7,13 +7,20 @@ Project context for Claude Code. Read this before making changes.
 `game-editor` is an early-stage **Figma-like design platform** for building games. The top level is
 a **Project** (a game), which has tabs: **Settings** (2D/3D + genre + default character traits),
 **Systems** (a game-system architect — health, magic, inventory, … with per-system questions,
-producing an "ai-game-maker" blueprint), **Preview** (a draggable retro HUD layout), **Levels**
-(each Level has **Locations** — described places, connected into a world map, with a
-manually-assigned cast and the scenes set there —
-and a **branching dialogue editor** with requirement/effect gating backed by project-wide story
-state), and **Characters** (per-project, with relationships and typed traits). A standalone
-**shape editor** (SVG outlines) also exists (route kept, no nav). It is intentionally minimal —
-favor small, readable additions over large abstractions until the feature set grows.
+producing an "ai-game-maker" blueprint), **Levels** (each Level has a **tile-grid layout editor**,
+**Locations** — described places, connected into a world map, with a manually-assigned cast and
+the scenes set there — and a **branching dialogue editor** with requirement/effect gating backed
+by project-wide story state), **Characters** (per-project, with relationships and typed traits),
+**Entities** (the level palette — enemies/hazards/pickups/props), and **Preview** (a draggable
+retro HUD layout). A standalone **shape editor** (SVG outlines) also exists (route kept, no nav).
+It is intentionally minimal — favor small, readable additions over large abstractions until the
+feature set grows.
+
+The product north star is `docs/VISION.md` (with the design-vocabulary backlog in
+`docs/CREATIVE-LEVERS.md`): the platform is the **source of truth an AI coding agent builds
+from** — its unified export (`gameblueprint/0.1`, contract in `docs/blueprint-schema.md`, served
+by `GET /api/projects/{id}/export`) is what the MCP server in `backend/mcp_server/` serves to
+agents working in game engines.
 
 The Systems/Settings/Preview tabs were consolidated from the `prototypes/lovable-game-systems-pages/`
 Lovable prototype (a different stack — TanStack/Tailwind/shadcn); their data + logic were **ported**
@@ -55,7 +62,15 @@ module declarations for CSS/asset imports — keep it.
   `/projects/:projectId/characters/:characterId` = `CharacterDetailPage` (edit name/description,
   manage relationships, edit traits). `/shapes` = `ShapeEditorPage`
   (route kept; no nav). **Characters are per-project, Locations are per-level** — there is no
-  global `/characters` route or nav item.
+  global `/characters` route or nav item. Additional tabs/routes: `entities` = `EntitiesPage`
+  (the project's **level palette**: enemies/hazards/pickups/props, each with a one-char `glyph`,
+  bounded `behavior` dict, and optional sprite via the same S3/FLUX pipeline as characters;
+  "Add starter set" seeds walker/spikes/coin), and
+  `/projects/:projectId/levels/:levelId/layout` = `LevelLayoutPage` (paint-editor for the level's
+  ASCII tile grid — palette of built-in tiles `. # = P G` + entity glyphs, drag-paint,
+  width/height resize, debounced PATCH of `Level.layout`, and the level's **intro dialogue
+  scene** picker). The Systems tab's Blueprint aside has an **Export** button downloading the
+  full `gameblueprint` JSON from `/api/projects/{id}/export`.
 - **Characters** (`pages/CharactersPage.tsx` + `CharacterDetailPage.tsx`): the list is a card grid
   (`Characters.css`) scoped via `GET /api/characters?project_id=`; "＋ New character" POSTs then
   routes to the detail page. Detail edits persist with `PATCH /api/characters/{id}`.
@@ -181,8 +196,36 @@ module declarations for CSS/asset imports — keep it.
     stored verbatim (normalization is the frontend's `lib/abilities.ts`); the delete is a plain
     one because nothing references an `Ability` yet.
   - `GET /api/levels` (optional `?project_id=` filter), `POST /api/levels` (create; auto-appends
-    `order`, takes `project_id`), `GET /api/levels/{id}`, `PATCH /api/levels/{id}` (rename) — the
-    project's Levels list + per-level hub. `GET /api/levels/{id}/characters` returns the level's
+    `order`, takes `project_id`), `GET /api/levels/{id}`, `PATCH /api/levels/{id}` (rename,
+    `layout` — validated ASCII tile grid `{width,height,rows}` (row lengths must match, every
+    glyph must be a built-in tile or a project entity glyph; 400 otherwise) — and
+    `intro_scene_id`, which must be one of the level's own scenes) — the
+    project's Levels list + per-level hub.
+  - **Entity types** (per-project level palette): `GET /api/entities?project_id=`,
+    `POST /api/entities` (name/glyph/category/behavior; glyph must be a single char, unique per
+    project, and not a built-in tile), `PATCH`/`DELETE /api/entities/{id}`,
+    `POST /api/entities/{id}/image` + `/generate-image` (same S3/FLUX services as characters,
+    stored under `Entities/Project-<pid>/entity-<eid>/`), and
+    `POST /api/projects/{id}/seed-entities` (idempotent starter set: walker `e`, spikes `^`,
+    coin `o`).
+  - `GET /api/projects/{id}/manifest` — the **design index** built by
+    `api/services/manifest.py`: one line per object (address · summary · hash ·
+    `depends_on`), meant to be read *before* the export so an agent can pull only what it
+    needs. `depends_on` records what the design **entails** (a locked exit needs its key,
+    a scene needs its cast) — deliberately **not** a build order; see the module docstring.
+  - `GET /api/projects/{id}/export` — the **unified `gameblueprint/0.1` export** built by
+    `api/services/blueprint.py`: systems answers + **derived feel numbers**
+    (`api/services/derived.py`, a Python port of `systemSimMath.ts` — keep in sync), abilities,
+    `hud_layout`, a project-wide `yarn_declarations` block (one `<<declare>>` per state
+    variable — the per-scene Yarn omits them, since duplicate declares across files are a Yarn
+    compile error), characters
+    + relationships + **resolved traits** (project defaults overlaid, mirroring
+    `resolveTraits()`), entity palette, tile legend (built-ins `. # = P G` + entity glyphs), and
+    every level's layout grid, derived entity coordinate list (top-left origin, y down),
+    locations (detail fields + the connection graph, serialized relative to each location),
+    `intro_scene_id`, `on_complete.next_level_id` (next by `order`), and full dialogue graphs
+    (nodes + edges). Schema contract: `docs/blueprint-schema.md` — change both together and
+    bump the format version on breaking changes. `GET /api/levels/{id}/characters` returns the level's
     cast **deduced from dialogue speakers** (`Dialogue.character` where `scene.level == level`),
     each with the lines they speak — powers `LevelCharactersPage`.
   - **Locations** (per-level): `GET /api/locations` (optional `?level_id=` filter), `POST
@@ -237,6 +280,21 @@ module declarations for CSS/asset imports — keep it.
     settings like the UI `theme`.
   - Interactive API docs (Swagger UI) at `/api/docs`; OpenAPI at `/api/openapi.json` (drives the
     frontend's `gen:api`).
+- **Addresses + hashes** (`api/services/addressing.py`, backed by the `DesignAddress`
+  model): every design object gets a readable **address** (`entity:goomba`,
+  `system:movement`) and a content **hash**. They do different jobs — the address is a
+  *name* (the shared word the platform, the creator and a building agent all use, readable
+  enough for an engine filename); the hash is a *version* (fingerprints the object's export
+  slice, so a build recorded against one can be spotted as stale). An address is derived
+  from the object's name and **follows renames** — renaming Walker → Goomba yields
+  `entity:goomba`, retires `entity:walker` into `former_addresses`, and should drive an
+  engine-side rename; the numeric `id` stays the identity. Retired addresses still
+  `resolve()`, with a live address always winning over a retired one. Rows are assigned
+  **lazily** during export/manifest builds, so no create endpoint has to know about them.
+  Hashing is content-based rather than `updated_at` because the editor debounce-saves while
+  sliders are dragged, so timestamps would churn constantly. `system:`/`state:`/`dialogue:`
+  addresses need no row — their names are already stable keys (`dialogue:` reuses
+  `Dialogue.title`, the same idea applied earlier for Yarn).
 - **Images** (`api/services/`) — shared by character portraits *and* location reference art
   (`imagegen.default_prompt` vs `default_location_prompt`; the only difference is the prompt and
   the key prefix): `storage.py` uploads image bytes to **AWS S3**
@@ -269,8 +327,11 @@ module declarations for CSS/asset imports — keep it.
   state_schema` has the info, but scenes commonly share state keys, and declaring the same
   variable twice across multiple `.yarn` files loaded into one Yarn Spinner project is a compile
   error; add declares by hand (or export project variables once, if that's built later).
-- `api/models.py`: `Project → Level → {Location, Scene}` (FKs; `Scene.location` optionally points
-  at one of the level's `Location`s, `SET_NULL` on delete), `Character` (now `project` FK +
+- `api/models.py`: `Project → Level → {Location, Scene}` (FKs; `Level` also has `layout` JSONB —
+  the ASCII tile grid — and an `intro_scene` FK; `Scene.location` optionally points
+  at one of the level's `Location`s, `SET_NULL` on delete), `EntityType` (per-project level
+  palette entry: name/glyph/category/`behavior` JSONB/image_key; unique (project, glyph) and
+  (project, name)), `Character` (now `project` FK +
   `description` + `image_key` + `traits` JSONB; `Scene ↔ Character` M2M), `CharacterRelationship`
   (directed labeled edge `from_character → to_character` with a `uniq_char_relationship` unique
   constraint; a character's outgoing links are `relationships_out`), `Location` (a place within a
@@ -283,6 +344,9 @@ module declarations for CSS/asset imports — keep it.
   (a project-scoped player **verb** — `name`/`description` (behavior intent, not code), `params`
   JSONB `{key: number|string|bool}` of the knobs that tune it, `unlock_requirements` JSONB in that
   same bounded vocabulary — empty = available from the start — and `order`), and
+  `DesignAddress` (the readable-name index — `project`/`object_type`/`object_id`/`slug`/
+  `is_current`, with a partial unique constraint so only one live object holds a name and
+  retired rows keep the rename trail), and
   `Dialogue` — a node in a branching dialogue
   **graph** (`scene` FK, `character` FK, `text`, plus `requirements`/`effects` JSONB lists of typed
   dicts — `has_item`/`stat_check`/`state_equals`/`remembered_choice` and `give_item`/`remove_item`/
@@ -325,13 +389,35 @@ An **MCP** server exposing the API as tools for an AI game-creation agent (`pyth
 stdio; see its README for client wiring). It's a **client of the REST API over HTTP**, not a Django
 app — `client.py` is a thin httpx wrapper (`GAME_EDITOR_API_URL`, default
 `http://127.0.0.1:8000/api`), so tools can't bypass endpoint validation and the backend must be
-running. `server.py` holds a `FastMCP` instance with ~40 read/create/update tools mirroring the
-hierarchy (projects · abilities · levels · locations · scenes · characters · character traits ·
-story state · dialogue, incl. `import_scene_yarn`/`export_scene_yarn`, plus the world layer:
-`connect_locations`/`update_location`/`generate_location_art` and the action layer:
-`list_abilities`/`create_ability`/`update_ability`), three resources (`game-editor://projects`,
-`…/projects/{id}` = project+levels+scenes+characters, `…/scenes/{id}/yarn`) and a `build-game`
-prompt. **Tool docstrings are the agent-facing docs** — the requirement/effect vocabulary spelled
+running. `server.py` holds a `FastMCP` instance with **two surfaces**. **Authoring** (~40
+read/create/update tools mirroring the hierarchy: projects · abilities · levels · locations ·
+scenes · characters · character traits · story state · dialogue, incl.
+`import_scene_yarn`/`export_scene_yarn`, plus the world layer
+`connect_locations`/`update_location`/`generate_location_art` and the action layer
+`list_abilities`/`create_ability`/`update_ability`) — driven by the `build-game` prompt.
+Authoring gained `set_level_layout` (paints `Level.layout`; the API validates row
+lengths and rejects glyphs with no matching entity type) and
+`create_entity_type`/`update_entity_type`/`seed_entity_palette`, without which an agent
+could create a level but never make it playable.
+**Reading the design** — `get_manifest` (the index, and the intended first read),
+`get_blueprint`, `get_game_config`, `get_level_design`, `list_entity_types`, plus
+`get_engine_conventions` (`mcp_server/conventions.py` — how a design object becomes a real
+file: units, file layout, node types, tile semantics, entity behavior, the
+`game_editor_sync.json` record; **Godot only**, deliberately) — for an agent *building* the
+game in an engine, driven by the `kickoff` prompt. The conventions also specify a
+**greybox** (flat colour per category, one cell each) so a builder never stalls on missing
+art — entity `image_url` is usually empty, and is a short-lived presigned URL when it isn't.
+The conventions are prescriptive only where reconciliation needs them: a layout that varies per session makes "not built"
+indistinguishable from "not found".
+**Reporting the build back** — `report_built` (call per object, passing the design hash it
+was built from) and `get_build_status` (resume a session; see what went stale or got
+renamed). The read tools all wrap `GET /api/projects/{id}/export` and slice it rather than
+re-deriving anything, so no two can disagree; they refetch per call (no caching) so an agent
+never builds from a design the creator has since changed. Four resources
+(`game-editor://projects`, `…/projects/{id}` = a blueprint-derived overview,
+`…/projects/{id}/blueprint` = the whole document, `…/scenes/{id}/yarn`).
+**Deps** (`mcp`, `httpx`) are in `backend/requirements.txt`; `mcp` is pinned `<2` because
+this code uses `FastMCP`, which v2 renamed to `MCPServer`. **Tool docstrings are the agent-facing docs** — the requirement/effect vocabulary spelled
 out in `create_dialogue` (and its requirement half, repeated in `connect_locations` and
 `create_ability`) must stay in sync with `DialogueRequirement`/`DialogueEffect` in
 `frontend/src/api/client.ts` (every entry keys off `state_key`; `change_stat` uses `amount`).

@@ -98,13 +98,24 @@ game engine               UEFN / Godot / Roblox / …
 - Characters with descriptions, directed relationships, typed **traits** (project
   defaults overlaid live, plus per-character overrides and own traits), and uploaded or
   FLUX-generated portraits in S3 (presigned URLs).
-- **Locations** per level: manually-cast places, each listing the scenes set there.
+- **Locations** per level: manually-cast places with kind/scale/mood/props, reference
+  imagery, and a **connection graph** (labeled, optionally requirement-locked exits —
+  lock-and-key design), each listing the scenes set there.
+- **Abilities**: the player's verb set as project-scoped rows, each with invented
+  `params` and an optional unlock requirement.
+- **Level layout**: an ASCII tile grid per level (`Level.layout`) painted in
+  `LevelLayoutPage`, over a project-scoped `EntityType` palette (glyph + bounded
+  `behavior` + sprite). One cell = one game unit, so a 3-unit jump clears a 3-cell wall.
+- **Blueprint export**: `GET /api/projects/{id}/export` serves the `gameblueprint/0.1`
+  document (contract in `docs/blueprint-schema.md`), including derived feel numbers and
+  their plain-language takeaways. Downloadable from the Systems tab.
 - HUD layout mockup (Preview tab). Typed end-to-end API (Django Ninja → openapi-fetch).
-- **MCP authoring server** (`backend/mcp_server/`): ~34 tools, 3 resources, and a
+- **MCP authoring server** (`backend/mcp_server/`): ~40 tools, 3 resources, and a
   `build-game` prompt, all as a thin client of the REST API. The original Phase 2
   arrived early — but as a *write* surface. An agent can author an entire game plan,
-  yet still can't *read* the plan back out: no manifest, no sim takeaways, no
-  whole-project export. Closing that read side is now Phase 1.
+  yet still can't *read* the plan back out: the export exists over REST, but no tool
+  serves it, and no tool exposes level layouts or the entity palette at all. Closing
+  that read side is the remaining half of Phase 1.
 
 ## Roadmap
 
@@ -115,42 +126,63 @@ small, ships on its own, and activates a piece of the story above.*
 
 ### Phase 1 — Blueprint export + MCP read layer (activates "brief the engineer")
 *Everything else layers on this. Merges the old Phases 1 and 2, minus the server that
-already exists.*
+already exists. **Shipped** (Aug 2026): the export endpoint, the derived-numbers port, the
+level/entity data model, the MCP read layer, and the addressing/manifest layer. `build_plan`
+was dropped rather than built (see below). What remains is the shared TS↔Python definitions
+and validating the whole thing against a real engine build.*
 
-- [ ] `GET /api/projects/{id}/export` → one versioned `"format": "gameblueprint/0.1"`
-      document (treat it as a contract): dimension/genre, the systems manifest
-      (per `buildManifest()`), each enabled system's **derived numbers + plain-language
-      takeaways** ported from `systemSimMath.ts` ("a careless player dies in ~8 hits" —
-      design intent in words, the highest-signal input an agent can get), `state_schema`
-      as a single `yarn_declarations` block (solves the cross-scene `<<declare>>`
-      collision documented in `yarn_export.py`), characters with resolved traits,
-      relationships and portrait URLs, the full Level → Location → Scene → dialogue
-      graph (structured nodes *and* per-scene Yarn via the existing exporter), the HUD
-      layout, and a deterministic `build_plan` (below).
+- [x] `GET /api/projects/{id}/export` → one versioned `"format": "gameblueprint/0.1"`
+      document (treat it as a contract). Shipped: dimension/genre, per-system answers
+      with **derived numbers + plain-language takeaways** (`services/derived.py`, a port
+      of `systemSimMath.ts` — "a careless player dies in ~2 hits"), `state_schema`,
+      characters + relationships + portrait URLs, the entity palette, the tile legend,
+      and every level's layout grid, flattened entity coordinates, `intro_scene_id`,
+      `on_complete`, and full Scene → dialogue graph. Contract in
+      `docs/blueprint-schema.md` — **change both together**.
+- [x] **Export gaps closed** (Aug 2026): `locations[]` per level with detail fields +
+      connections · top-level `abilities[]` · character **resolved traits** (project defaults
+      overlaid, mirroring `characterTraits.ts`) · `hud_layout` · per-scene Yarn text via the
+      existing exporter · `state_schema` as a single `yarn_declarations` block (solves the
+      cross-scene `<<declare>>` collision documented in `yarn_export.py`). Every
+      `CREATIVE-LEVERS` "Export:" line that isn't waiting on `build_plan` is now done.
 - [ ] **Where definitions live:** extract the system/genre/dimension data from
       `gameSystems.ts` into a shared `shared/gameSystems.json` consumed by both TS and
-      Python; port only the pure sim math to `backend/api/services/sim_math.py`.
-      (Persisting a frontend-computed manifest was rejected: MCP agents PATCH `systems`
-      directly and would silently stale it — the manifest must be derived at read time.)
-- [ ] New backend services: `system_defs.py` (load the JSON, `build_manifest()`),
-      `sim_math.py`, `blueprint.py` (document assembly + build plan);
+      Python. `derived.py` is currently a **hand-port** of `systemSimMath.ts` with no
+      parity test — the two can silently drift, which is exactly the failure this item
+      prevents. (Persisting a frontend-computed manifest was rejected: MCP agents PATCH
+      `systems` directly and would silently stale it — derive at read time.)
+- [ ] Remaining backend services: `system_defs.py` (load the JSON, `build_manifest()`),
       `declarations_for()` in `yarn_export.py`. Seeds backend test infra: TS↔Python
       parity fixtures on manifest + takeaway strings, build-plan ordering invariants.
-- [ ] `get_build_plan`: a **deterministic** build order — topological sort over known
-      dependencies (project scaffold → declarations file → foundation systems, health
-      before combat → scoped extensions → characters before the scenes that cast them →
-      per level: locations → scenes → dialogue → HUD) — rendered as templated prose
-      interpolating real design facts. No LLM on our side: we serve the skeleton; the
-      creator's agent adapts it to engine specifics.
-- [ ] MCP: `get_blueprint` + `get_build_plan` tools, a
-      `game-editor://projects/{id}/blueprint` resource, a `/kickoff` prompt ("read the
-      blueprint, follow the plan, never invent values the design already answers"), and
-      rebuild the project resource on top of the export so it stops omitting locations,
-      dialogue, and per-character traits.
-- [ ] "Download blueprint" button on the Systems tab (augments the copy-only manifest).
+      *(`blueprint.py` and `derived.py` exist; `sim_math.py` shipped as `derived.py`.)*
+- [x] ~~`get_build_plan`: a deterministic build order — topological sort…~~ **Dropped
+      (Aug 2026)**, replaced by `get_manifest` + addresses/hashes. The creator directs their
+      own agent ("do movement first"), so an order *we* compute is a third opinion competing
+      with theirs, and "health before combat" is a notch this platform shouldn't have. What
+      an agent actually needs is a **map, not a route**: every object with a stable address,
+      a summary, a hash, and the dependencies the design genuinely *entails* — a locked exit
+      needs its key, a scene needs its cast. Same information, no invented sequence, and
+      nothing fights the creator when they specify one. See `api/services/manifest.py`.
+- [x] **Addresses + hashes** (Aug 2026): every design object carries a readable address
+      (`entity:goomba`) that follows renames, and a content hash. These are what make the
+      rest of the loop possible — without a shared name for a thing, "I built the walker"
+      and "does the walker still match?" have no common referent, and drift is undetectable.
+      The hash gives **staleness detection for free**: once an agent reports building
+      against a hash, the platform alone can tell that the design has since changed, with no
+      engine access and no reconcile pass. `api/services/addressing.py`.
+- [x] MCP **read layer** (Aug 2026): `get_blueprint`, `get_game_config`,
+      `get_level_design` and `list_entity_types` — each a slice of the export, refetched per
+      call so an agent never builds from a stale design — plus a
+      `game-editor://projects/{id}/blueprint` resource, the `kickoff` prompt ("read the
+      blueprint, follow the plan, never invent values the design already answers"), and the
+      project resource rebuilt on top of the export. `get_build_plan` is the one read tool
+      still missing; it lands with the item above.
+      *(Also: `mcp` + `httpx` were never declared as dependencies — the server had never
+      been run. Now in `requirements.txt`, with `mcp` pinned `<2`.)*
+- [x] "Download blueprint" button on the Systems tab (augments the copy-only manifest).
 - [ ] Validate with the target demo: point Claude Code at an empty Godot project + the
-      server; "build the tavern scene"; confirm it pulls real design facts instead of
-      inventing them.
+      server; "build level 1"; confirm it pulls real design facts instead of inventing
+      them.
 
 ### Phase 2 — Semantic model gaps (makes the blueprint unambiguous)
 *Holes a building agent currently has to fill with plausible genre defaults — the exact
@@ -187,11 +219,48 @@ actionable steps in `CREATIVE-LEVERS.md`; the items below are its prerequisites.
       projects multiply and titles collide.
 
 ### Phase 4 — Build truth flows back (activates the supervisor)
-- [ ] `build_status` field on design objects (dialogue scenes, systems, characters):
-      designed / in-progress / built / verified. Write tool `set_build_status`; filter
-      `get_build_plan` by it so the plan is always live.
+*Now unblocked by addresses + hashes: an agent can finally name the thing it built and say
+which version of the design it built from. Godot is the only target for now — deliberately,
+since engine-specific conventions do more for the agent's efficiency than any additional
+data we could serve.*
+
+- [x] **Godot conventions** (Aug 2026, `mcp_server/conventions.py` +
+      `get_engine_conventions`): units (one cell = one design unit = 32 px, so the derived
+      numbers convert mechanically), file layout per address type, node types, tile
+      semantics (`=` is a one-way *tile property*; `P`/`G` are not tiles), entity behavior,
+      and `game_editor_sync.json`. Prescriptive **only** where reconciliation needs it —
+      a layout that varies session to session makes "not built" indistinguishable from
+      "not found", which silently breaks the return half of the loop.
+- [x] **Dialogue runtime decided**: a small GDScript player over the `dialogue` graph, not
+      Yarn Spinner — the official GDScript port requires Godot 4.6+ and is alpha ("we do not
+      recommend you use this to ship a game just yet") and the C# port is an unsupported beta
+      needing the .NET build. The `.yarn` files are still written, so adopting the addon
+      later is a drop-in. This only works because the export carries dialogue in *both*
+      forms, and the runner is small only because the requirement/effect vocabulary was
+      bounded in the first place.
+
+- [x] `report_built(address, engine_path, hash)` (Aug 2026) — the write half of the loop,
+      plus `get_build_status`. Staleness works exactly as hoped: an object whose design hash
+      differs from the one it was built against is stale, detected with **no engine access
+      at all**. Renames surface the same way — the record follows the object, so a build
+      filed under an old address reports back that the engine artifact needs renaming.
+      An address that names nothing is rejected, so an invented address can't file a report
+      nothing will ever match.
+- [x] `build_status`: not_built / in_progress / built / verified, derived from the reports
+      rather than set by hand, with `stale` and `renamed` computed at read time.
+      `percent_built` counts only built-**and**-current objects — a stale build is work still
+      owed. Orphaned reports (design object deleted, engine file left behind) are surfaced
+      rather than hidden.
+- [ ] **Policy — decided:** engine changes that *contradict* the design arrive as pending
+      deviations the creator accepts or rejects. Values the design never specified (the
+      agent had to invent one) are recorded as design, flagged as originating in the build —
+      nothing is being overwritten, and the design gets more complete rather than drifting.
 - [ ] `report_deviation` write tool + pending-deviations model + reconcile UI
-      (accept-into-design / flag-for-rework).
+      (accept-into-design / flag-for-rework), keyed by address — including **field**
+      addresses (`system:movement.gravity`) so a mismatch names exactly one value.
+- [ ] `get_design_values`: the same design as a **flat** list of `{address, value}` rows.
+      The nested blueprint is right for comprehension and wrong for diffing; `/sync-check`
+      needs something a mechanical comparison can walk.
 - [ ] `post_build_snapshot` write tool → S3 (reuse `storage.py` pipeline) → snapshots
       render in the "best available representation" slot next to design mockups.
 - [ ] Project-home rollup: % built, pending deviations count, latest snapshots.
@@ -206,8 +275,9 @@ actionable steps in `CREATIVE-LEVERS.md`; the items below are its prerequisites.
 as the Phase-1 validation environment. Fortnite and Roblox are the long-term reach
 targets and should both be covered eventually.*
 
-- [ ] Godot demo: agent + MCP server scaffold a playable scene from the blueprint
-      (dialogue via Yarn Spinner, systems as generated config/resources).
+- [ ] Godot demo: agent + MCP server scaffold a playable scene from the blueprint (systems
+      as a generated config autoload, dialogue via the GDScript runner — see Phase 4).
+      Target: **Godot 4.4**, the platformer project.
 - [ ] Verse/UEFN codegen prototype off the Phase-1 export: `game_config.verse`
       (systems → typed constants/classes) + dialogue → Verse state machine. Scope
       honestly: creators wire generated modules to devices themselves; no custom

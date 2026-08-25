@@ -1,0 +1,236 @@
+/* Entities tab — project palette of placeable things (enemies/hazards/pickups/props). */
+
+.entities-page {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 1.5rem 1rem 3rem;
+}
+
+.entities-page__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.entities-page__title {
+  margin: 0;
+  font-size: 1.5rem;
+}
+
+.entities-page__actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.entities-page__lead {
+  color: var(--muted);
+  font-size: 0.9rem;
+  margin: 0.5rem 0 1.25rem;
+}
+
+.entities-page__error {
+  color: var(--orange);
+  font-size: 0.9rem;
+}
+
+.entities-page__empty {
+  color: var(--muted);
+  font-size: 0.9rem;
+  padding: 1rem;
+}
+
+.entities-page__body {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  gap: 1.25rem;
+  align-items: start;
+}
+
+@media (max-width: 760px) {
+  .entities-page__body {
+    grid-template-columns: 1fr;
+  }
+}
+
+.entities-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.entity-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg-1);
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+}
+
+.entity-row--active {
+  border-color: var(--orange);
+  box-shadow: 0 0 10px var(--orange-glow);
+}
+
+.entity-row__glyph {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-family: monospace;
+  font-weight: 700;
+  background: color-mix(in srgb, var(--green) 18%, transparent);
+  color: var(--green);
+}
+
+.entity-row__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.entity-row__cat {
+  font-size: 0.7rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.1rem 0.5rem;
+}
+
+.entity-row__cat--enemy,
+.entity-row__cat--hazard {
+  color: var(--orange);
+  border-color: color-mix(in srgb, var(--orange) 45%, transparent);
+}
+
+.entity-row__cat--pickup {
+  color: var(--green);
+  border-color: color-mix(in srgb, var(--green) 45%, transparent);
+}
+
+.entity-editor {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg-1);
+  padding: 1rem 1.1rem 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.entity-editor__row {
+  display: flex;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+}
+
+.entity-editor__label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.78rem;
+  color: var(--muted);
+  flex: 1;
+  min-width: 130px;
+}
+
+.entity-editor__label--glyph {
+  flex: 0 0 70px;
+  min-width: 70px;
+}
+
+.entity-editor__input {
+  font: inherit;
+  color: var(--text);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.45rem 0.6rem;
+}
+
+.entity-editor__input--glyph {
+  font-family: monospace;
+  text-align: center;
+  font-weight: 700;
+}
+
+.entity-editor__textarea {
+  resize: vertical;
+}
+
+.entity-editor__behavior {
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  padding: 0.7rem 0.8rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.entity-editor__behavior-title {
+  font-size: 0.72rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.entity-editor__check {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.85rem;
+  color: var(--text);
+}
+
+.entity-editor__image {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.entity-editor__avatar {
+  width: 84px;
+  height: 84px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  background: var(--bg-2);
+}
+
+.entity-editor__avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.entity-editor__avatar-glyph {
+  font-family: monospace;
+  font-size: 2rem;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.entity-editor__image-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.entity-editor__delete {
+  align-self: flex-start;
+  color: var(--orange);
+}

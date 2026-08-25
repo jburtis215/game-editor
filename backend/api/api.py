@@ -6,20 +6,31 @@ The schemas here drive the OpenAPI spec, which the frontend turns into typed TS
 """
 import re
 
+from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from ninja import File, NinjaAPI, Schema
 from ninja.files import UploadedFile
 
-from .services import imagegen, storage, yarn_export, yarn_import
+from .services import (
+    blueprint,
+    build_reports,
+    imagegen,
+    manifest,
+    storage,
+    yarn_export,
+    yarn_import,
+)
 
 from typing import Any
 
 from .models import (
     Ability,
+    BuildRecord,
     Character,
     CharacterRelationship,
     Dialogue,
     DialogueEdge,
+    EntityType,
     Level,
     Location,
     LocationConnection,
@@ -185,13 +196,17 @@ class LevelOut(Schema):
     name: str
     order: int
     project_id: int | None = None
+    layout: dict[str, Any] = {}  # {"width": W, "height": H, "rows": [str]} — {} = none drawn
+    intro_scene_id: int | None = None
 
 
 class LevelUpdateIn(Schema):
-    """Partial update of a level (e.g. its title)."""
+    """Partial update of a level (rename, layout grid, intro dialogue scene)."""
 
     name: str | None = None
     order: int | None = None
+    layout: dict[str, Any] | None = None
+    intro_scene_id: int | None = None  # must be one of this level's scenes; null clears
 
 
 class LevelCreateIn(Schema):
@@ -215,6 +230,43 @@ class LevelCharacterOut(Schema):
     description: str = ""
     image_url: str = ""
     lines: list[LevelCharacterLineOut] = []
+
+
+class EntityTypeOut(Schema):
+    """A placeable non-character thing (enemy/hazard/pickup/prop) in a project's palette."""
+
+    id: int
+    name: str
+    glyph: str
+    category: str
+    description: str = ""
+    behavior: dict[str, Any] = {}
+    project_id: int
+    image_url: str = ""  # derived (presigned) from image_key at read time
+
+    @staticmethod
+    def resolve_image_url(obj) -> str:
+        key = obj.get("image_key", "") if isinstance(obj, dict) else getattr(obj, "image_key", "")
+        return storage.view_url(key)
+
+
+class EntityTypeCreateIn(Schema):
+    project_id: int
+    name: str
+    glyph: str  # single character, unique per project, not a built-in tile glyph
+    category: str = EntityType.CATEGORY_ENEMY
+    description: str = ""
+    behavior: dict[str, Any] = {}
+
+
+class EntityTypeUpdateIn(Schema):
+    """Partial update — omitted fields are left unchanged."""
+
+    name: str | None = None
+    glyph: str | None = None
+    category: str | None = None
+    description: str | None = None
+    behavior: dict[str, Any] | None = None
 
 
 class SceneOut(Schema):
@@ -605,6 +657,173 @@ def generate_character_image(request, character_id: int, payload: GenerateImageI
     return 200, _character_detail(character)
 
 
+# --- Entity types (level palette: enemies, hazards, pickups, props) ---------------------------
+
+VALID_ENTITY_CATEGORIES = {choice for choice, _ in EntityType.CATEGORY_CHOICES}
+
+
+def _entity_key_prefix(entity: EntityType) -> str:
+    """S3 folder for an entity's images: Entities/Project-<pid>/entity-<eid> (mirrors portraits)."""
+    return f"Entities/Project-{entity.project_id}/entity-{entity.id}"
+
+
+def _validate_entity_fields(
+    project_id: int, glyph: str | None, category: str | None, *, exclude_pk: int | None = None
+) -> str | None:
+    if glyph is not None:
+        if len(glyph) != 1 or glyph.isspace():
+            return "glyph must be a single non-space character"
+        if glyph in blueprint.BUILTIN_TILES:
+            return f"glyph '{glyph}' is reserved (built-in tile)"
+        qs = EntityType.objects.filter(project_id=project_id, glyph=glyph)
+        if exclude_pk is not None:
+            qs = qs.exclude(pk=exclude_pk)
+        if qs.exists():
+            return f"glyph '{glyph}' is already used in this project"
+    if category is not None and category not in VALID_ENTITY_CATEGORIES:
+        return f"category must be one of: {', '.join(sorted(VALID_ENTITY_CATEGORIES))}"
+    return None
+
+
+@api.get("/entities", response=list[EntityTypeOut], summary="List entity types")
+def list_entity_types(request, project_id: int | None = None):
+    qs = EntityType.objects.all()
+    if project_id is not None:
+        qs = qs.filter(project_id=project_id)
+    return list(qs)
+
+
+@api.post("/entities", response={201: EntityTypeOut, 400: Error}, summary="Create an entity type")
+def create_entity_type(request, payload: EntityTypeCreateIn):
+    get_object_or_404(Project, id=payload.project_id)
+    error = _validate_entity_fields(payload.project_id, payload.glyph, payload.category)
+    if error:
+        return 400, {"error": error}
+    entity = EntityType.objects.create(
+        project_id=payload.project_id,
+        name=payload.name,
+        glyph=payload.glyph,
+        category=payload.category,
+        description=payload.description,
+        behavior=payload.behavior,
+    )
+    return 201, entity
+
+
+@api.patch(
+    "/entities/{int:entity_id}",
+    response={200: EntityTypeOut, 400: Error},
+    summary="Update an entity type",
+)
+def update_entity_type(request, entity_id: int, payload: EntityTypeUpdateIn):
+    entity = get_object_or_404(EntityType, id=entity_id)
+    data = payload.model_dump(exclude_unset=True)
+    error = _validate_entity_fields(
+        entity.project_id, data.get("glyph"), data.get("category"), exclude_pk=entity.pk
+    )
+    if error:
+        return 400, {"error": error}
+    for field in ("name", "glyph", "category", "description", "behavior"):
+        if field in data and data[field] is not None:
+            setattr(entity, field, data[field])
+    entity.save()
+    return entity
+
+
+@api.delete("/entities/{int:entity_id}", response={204: None}, summary="Delete an entity type")
+def delete_entity_type(request, entity_id: int):
+    get_object_or_404(EntityType, id=entity_id).delete()
+    return 204, None
+
+
+@api.post(
+    "/entities/{int:entity_id}/image",
+    response={200: EntityTypeOut, 400: Error, 503: Error},
+    summary="Upload an entity sprite/concept image",
+)
+def upload_entity_image(request, entity_id: int, file: UploadedFile = File(...)):
+    entity = get_object_or_404(EntityType, id=entity_id)
+    content_type = file.content_type or ""
+    if not content_type.startswith("image/"):
+        return 400, {"error": "File must be an image."}
+    try:
+        _url, key = storage.upload_image(
+            file.read(), content_type, key_prefix=_entity_key_prefix(entity)
+        )
+    except storage.StorageNotConfigured as exc:
+        return 503, {"error": str(exc)}
+    except storage.StorageError as exc:
+        return 400, {"error": f"Upload failed: {exc}"}
+    entity.image_key = key
+    entity.save(update_fields=["image_key", "updated_at"])
+    return 200, entity
+
+
+@api.post(
+    "/entities/{int:entity_id}/generate-image",
+    response={200: EntityTypeOut, 400: Error, 503: Error},
+    summary="Generate an entity image with AI",
+)
+def generate_entity_image(request, entity_id: int, payload: GenerateImageIn):
+    entity = get_object_or_404(EntityType, id=entity_id)
+    prompt = (payload.prompt or "").strip() or imagegen.default_prompt(
+        entity.name, f"{entity.category}. {entity.description}"
+    )
+    try:
+        data, content_type = imagegen.generate_image(prompt)
+        _url, key = storage.upload_image(data, content_type, key_prefix=_entity_key_prefix(entity))
+    except (imagegen.GenerationNotConfigured, storage.StorageNotConfigured) as exc:
+        return 503, {"error": str(exc)}
+    except (imagegen.GenerationError, storage.StorageError) as exc:
+        return 400, {"error": str(exc)}
+    entity.image_key = key
+    entity.save(update_fields=["image_key", "updated_at"])
+    return 200, entity
+
+
+STARTER_ENTITIES = [
+    {
+        "name": "Walker",
+        "glyph": "e",
+        "category": EntityType.CATEGORY_ENEMY,
+        "description": "A basic patrolling enemy. Turns around at edges and walls.",
+        "behavior": {"pattern": "patrol", "speed": 3, "harmful_on_touch": True, "stompable": True},
+    },
+    {
+        "name": "Spikes",
+        "glyph": "^",
+        "category": EntityType.CATEGORY_HAZARD,
+        "description": "Stationary floor spikes. Hurt on touch; cannot be destroyed.",
+        "behavior": {"pattern": "static", "harmful_on_touch": True, "stompable": False},
+    },
+    {
+        "name": "Coin",
+        "glyph": "o",
+        "category": EntityType.CATEGORY_PICKUP,
+        "description": "A collectible coin.",
+        "behavior": {"pattern": "static", "harmful_on_touch": False, "stompable": False},
+    },
+]
+
+
+@api.post(
+    "/projects/{int:project_id}/seed-entities",
+    response=list[EntityTypeOut],
+    summary="Add the starter platformer palette",
+)
+def seed_entities(request, project_id: int):
+    """Create the starter entity set (walker enemy, spikes, coin) for a project, skipping
+    any whose glyph or name is already taken. Returns the project's full palette."""
+    project = get_object_or_404(Project, id=project_id)
+    for spec in STARTER_ENTITIES:
+        taken = EntityType.objects.filter(project=project).filter(
+            Q(glyph=spec["glyph"]) | Q(name=spec["name"])
+        )
+        if not taken.exists():
+            EntityType.objects.create(project=project, **spec)
+    return list(project.entity_types.all())
+
+
 # --- Scenes (dialogue sidebars) ---------------------------------------------------------------
 
 
@@ -653,6 +872,86 @@ def update_project(request, project_id: int, payload: ProjectUpdateIn):
         project.character_traits = data["character_traits"]
     project.save()
     return project
+
+
+class BuildReportIn(Schema):
+    """One object an agent built in an engine. `address` comes from the manifest; `hash` is
+    the design hash it was built from, and is what later makes staleness detectable."""
+
+    address: str
+    engine_path: str = ""
+    hash: str = ""  # the object's design hash at build time
+    status: str = "built"  # in_progress | built | verified
+    engine: str = "godot"
+    note: str = ""
+
+@api.get(
+    "/projects/{int:project_id}/export",
+    response=dict,
+    summary="Export the project as a gameblueprint document",
+)
+def export_project(request, project_id: int):
+    """The unified source-of-truth export (`gameblueprint/0.1`): systems + derived feel
+    numbers, characters, entity palette, tile legend, and every level's layout grid,
+    entity coordinates, transitions, and dialogue graphs. This is the document the MCP
+    server and any engine codegen consume — schema contract in docs/blueprint-schema.md."""
+    project = get_object_or_404(Project, id=project_id)
+    return blueprint.build_blueprint(project)
+
+
+@api.get(
+    "/projects/{int:project_id}/manifest",
+    response=dict,
+    summary="Index every design object with its address, hash and dependencies",
+)
+def project_manifest(request, project_id: int):
+    """A map of the design, not a route through it: one line per object with its stable
+    address, a one-phrase summary, a content hash for staleness checks, and the
+    dependencies its own design implies (a locked exit needs its key; a scene needs its
+    cast). Small enough for a building agent to read first and then pull only what it
+    needs — see `api/services/manifest.py` for why no build *order* is asserted."""
+    project = get_object_or_404(Project, id=project_id)
+    return manifest.build_manifest(project)
+
+
+@api.post(
+    "/projects/{int:project_id}/build-reports",
+    response={200: dict, 400: Error},
+    summary="Record what an agent built for one design object",
+)
+def report_build(request, project_id: int, payload: BuildReportIn):
+    """The write half of the loop. The platform can't see inside an engine project, so this
+    is the only way it learns something exists. Recording the design `hash` it was built
+    from is what lets the platform notice later, on its own, that the design has changed
+    underneath it. Rejects an address that names nothing in the project — an invented
+    address would file a report nothing can ever match."""
+    project = get_object_or_404(Project, id=project_id)
+    try:
+        return 200, build_reports.record_build(
+            project,
+            address=payload.address,
+            engine_path=payload.engine_path,
+            built_hash=payload.hash,
+            status=payload.status,
+            engine=payload.engine,
+            note=payload.note,
+        )
+    except build_reports.ReportError as exc:
+        return 400, {"error": str(exc)}
+
+
+@api.get(
+    "/projects/{int:project_id}/build-status",
+    response=dict,
+    summary="What has been built, what is stale, and the rollup",
+)
+def get_build_status(request, project_id: int, engine: str = "godot"):
+    """Every design object with its build state. `stale` means the design changed after the
+    object was built; `renamed` means the creator renamed it since, so the engine artifact
+    is named wrong. Both are derived at read time — a stored staleness flag would itself
+    need invalidating whenever the design changed, which is the bug it exists to catch."""
+    project = get_object_or_404(Project, id=project_id)
+    return build_reports.build_status(project, engine=engine)
 
 
 # --- Abilities (the player's verb set) --------------------------------------------------------
@@ -739,7 +1038,29 @@ def get_level(request, level_id: int):
     return get_object_or_404(Level, id=level_id)
 
 
-@api.patch("/levels/{int:level_id}", response=LevelOut, summary="Update a level")
+def _validate_layout(layout: dict, project_id: int | None) -> str | None:
+    """Check a Level.layout dict; returns an error message or None. Every row must match
+    `width`, and every glyph must be a built-in tile or one of the project's entity glyphs."""
+    rows = layout.get("rows")
+    width, height = layout.get("width"), layout.get("height")
+    if not isinstance(rows, list) or not all(isinstance(r, str) for r in rows):
+        return "layout.rows must be a list of strings"
+    if not isinstance(width, int) or not isinstance(height, int) or width < 1 or height < 1:
+        return "layout.width and layout.height must be positive integers"
+    if len(rows) != height or any(len(r) != width for r in rows):
+        return "layout.rows must be exactly height rows of exactly width characters"
+    known = set(blueprint.BUILTIN_TILES)
+    if project_id is not None:
+        known |= set(
+            EntityType.objects.filter(project_id=project_id).values_list("glyph", flat=True)
+        )
+    unknown = {ch for row in rows for ch in row} - known
+    if unknown:
+        return f"Unknown glyphs in layout: {' '.join(sorted(unknown))} — add matching entity types first"
+    return None
+
+
+@api.patch("/levels/{int:level_id}", response={200: LevelOut, 400: Error}, summary="Update a level")
 def update_level(request, level_id: int, payload: LevelUpdateIn):
     level = get_object_or_404(Level, id=level_id)
     data = payload.model_dump(exclude_unset=True)
@@ -747,6 +1068,20 @@ def update_level(request, level_id: int, payload: LevelUpdateIn):
         level.name = data["name"]
     if "order" in data and data["order"] is not None:
         level.order = data["order"]
+    if "layout" in data and data["layout"] is not None:
+        if data["layout"] != {}:
+            error = _validate_layout(data["layout"], level.project_id)
+            if error:
+                return 400, {"error": error}
+        level.layout = data["layout"]
+    if "intro_scene_id" in data:
+        if data["intro_scene_id"] is None:
+            level.intro_scene = None
+        else:
+            scene = Scene.objects.filter(id=data["intro_scene_id"], level=level).first()
+            if scene is None:
+                return 400, {"error": "intro_scene_id must be one of this level's scenes"}
+            level.intro_scene = scene
     level.save()
     return level
 

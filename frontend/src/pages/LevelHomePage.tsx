@@ -28,6 +28,12 @@ export default function LevelHomePage() {
       {error && <p className="level-home__error">{error}</p>}
 
       <div className="level-home__tiles">
+        <Link to={`/projects/${projectId}/levels/${levelId}/layout`} className="lh-tile">
+          <span className="lh-tile__icon">🗺️</span>
+          <span className="lh-tile__title">Layout</span>
+          <span className="lh-tile__desc">Paint the level's tile map</span>
+        </Link>
+
         <Link to={`/projects/${projectId}/levels/${levelId}/dialogue`} className="lh-tile">
           <span className="lh-tile__icon">💬</span>
           <span className="lh-tile__title">Dialogue</span>

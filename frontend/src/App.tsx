@@ -14,6 +14,8 @@ import ShapeEditorPage from './pages/ShapeEditorPage';
 import DialogueEditorPage from './pages/DialogueEditorPage';
 import CharactersPage from './pages/CharactersPage';
 import CharacterDetailPage from './pages/CharacterDetailPage';
+import EntitiesPage from './pages/EntitiesPage';
+import LevelLayoutPage from './pages/LevelLayoutPage';
 
 const THEME_LABELS: Record<Theme, string> = {
   neon: 'Neon',
@@ -80,8 +82,13 @@ export default function App() {
             <Route path="preview" element={<ProjectPreviewPage />} />
             <Route path="levels" element={<LevelsPage />} />
             <Route path="characters" element={<CharactersPage />} />
+            <Route path="entities" element={<EntitiesPage />} />
           </Route>
           <Route path="/projects/:projectId/levels/:levelId" element={<LevelHomePage />} />
+          <Route
+            path="/projects/:projectId/levels/:levelId/layout"
+            element={<LevelLayoutPage />}
+          />
           <Route
             path="/projects/:projectId/levels/:levelId/dialogue"
             element={<DialogueEditorPage />}

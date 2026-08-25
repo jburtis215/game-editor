@@ -9,6 +9,7 @@ import {
   type QuestionDef,
   type Scope,
 } from '../lib/gameSystems';
+import { api } from '../api/client';
 import { useProject } from './ProjectHomePage';
 import SystemSim from '../components/systems/SystemSim';
 import AbilitiesPanel from '../components/systems/AbilitiesPanel';
@@ -73,6 +74,21 @@ export default function ProjectSystemsPage() {
     await navigator.clipboard.writeText(JSON.stringify(manifest, null, 2));
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
+  }
+
+  async function downloadBlueprint() {
+    // The full gameblueprint export (systems + levels + dialogue + characters + entities).
+    const { data, error } = await api.GET('/api/projects/{project_id}/export', {
+      params: { path: { project_id: project.id } },
+    });
+    if (error || !data) return;
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${project.name.replace(/[^a-zA-Z0-9_-]+/g, '-').toLowerCase()}-blueprint.json`;
+    a.click();
+    URL.revokeObjectURL(url);
   }
 
   function resetToGenre() {
@@ -167,8 +183,11 @@ export default function ProjectSystemsPage() {
               <button type="button" className="btn" onClick={resetToGenre}>
                 Reset
               </button>
-              <button type="button" className="btn btn--primary" onClick={copyManifest}>
+              <button type="button" className="btn" onClick={copyManifest}>
                 {copied ? 'Copied ✓' : 'Copy'}
+              </button>
+              <button type="button" className="btn btn--primary" onClick={() => void downloadBlueprint()}>
+                Export
               </button>
             </div>
           </div>

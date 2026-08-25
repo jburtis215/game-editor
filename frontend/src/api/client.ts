@@ -29,6 +29,19 @@ export type DialogueNode = components['schemas']['DialogueNodeOut'];
 export type DialogueParent = components['schemas']['DialogueParentOut'];
 
 export type User = components['schemas']['UserOut'];
+export type EntityType = components['schemas']['EntityTypeOut'];
+
+/** Level.layout shape: ASCII grid rows + dimensions (see docs/blueprint-schema.md). */
+export type LevelLayout = { width: number; height: number; rows: string[] };
+
+/** Built-in layout glyphs with fixed meanings (mirrors backend blueprint.BUILTIN_TILES). */
+export const BUILTIN_TILES: { glyph: string; name: string }[] = [
+  { glyph: '.', name: 'Empty' },
+  { glyph: '#', name: 'Ground' },
+  { glyph: '=', name: 'Platform' },
+  { glyph: 'P', name: 'Player start' },
+  { glyph: 'G', name: 'Goal' },
+];
 
 export type StateEntryType = 'remembered_choice' | 'item' | 'stat' | 'flag';
 

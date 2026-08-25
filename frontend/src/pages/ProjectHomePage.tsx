@@ -19,6 +19,7 @@ const TABS = [
   { to: 'systems', label: 'Systems' },
   { to: 'levels', label: 'Levels' },
   { to: 'characters', label: 'Characters' },
+  { to: 'entities', label: 'Entities' },
   { to: 'preview', label: 'Preview' },
 ] as const;
 

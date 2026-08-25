@@ -5,6 +5,14 @@ build a game the same way the UI does: create a project, set its dimension/genre
 systems, add levels, locations, scenes, characters, then write branching dialogue (or
 paste/pull a whole scene as Yarn).
 
+Two surfaces, and which one you want depends on why you're here:
+
+* **Authoring** (`create_*` / `update_*`) — you are helping design the game.
+* **Reading the design** (`get_blueprint`, `get_game_config`, `get_level_design`,
+  `list_entity_types`) — you are *building* the game in an engine and need the plan. These
+  serve slices of the `gameblueprint/0.1` export (contract: `docs/blueprint-schema.md`);
+  start from the `/kickoff` prompt.
+
 Run it over stdio:  ./.venv/bin/python -m mcp_server
 """
 from __future__ import annotations
@@ -14,17 +22,23 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
-from . import client
+from . import client, conventions
 
 mcp = FastMCP(
     "game-editor",
     instructions=(
-        "Tools for authoring a video game in game-editor. The hierarchy is "
-        "Project → Level → (Location, Scene) → Dialogue graph, with Characters owned by the "
-        "project. Start with list_projects/create_project, then work down. Dialogue is a "
-        "graph, not a tree: create_dialogue makes a node (optionally attached to a parent) and "
-        "link_dialogue attaches an existing node as another response, which is how branches "
-        "converge. For bulk authoring, import_scene_yarn is usually faster than node-by-node."
+        "Tools for designing a video game in game-editor and for building it from that design. "
+        "The hierarchy is Project → Level → (Location, Scene) → Dialogue graph, with Characters "
+        "and Abilities owned by the project. "
+        "If you are BUILDING the game in an engine, start with get_game_config and "
+        "get_level_design (or get_blueprint for the whole plan) — the design already answers "
+        "questions like jump height, enemy behavior and level layout, so read it rather than "
+        "inventing values. "
+        "If you are AUTHORING the design, start with list_projects/create_project and work down. "
+        "Dialogue is a graph, not a tree: create_dialogue makes a node (optionally attached to a "
+        "parent) and link_dialogue attaches an existing node as another response, which is how "
+        "branches converge. For bulk authoring, import_scene_yarn is usually faster than "
+        "node-by-node."
     ),
 )
 
@@ -705,6 +719,345 @@ async def export_scene_yarn(scene_id: int) -> dict[str, Any]:
     return await client.get(f"/scenes/{scene_id}/export-yarn")
 
 
+# --- Level layout + entity palette (authoring the playable space) ------------------------------
+@mcp.tool()
+async def set_level_layout(
+    level_id: int, rows: list[str], intro_scene_id: int | None = None
+) -> dict[str, Any]:
+    """Paint a level's tile grid — the playable space itself.
+
+    `rows` is the level as ASCII, one character per cell, every row the same length.
+    `(0, 0)` is the **top-left** cell; x grows rightward and y grows **downward**, matching
+    Godot 2D, so there is no vertical flip anywhere in the pipeline. Width and height are
+    taken from `rows`.
+
+    Glyphs — `.` empty · `#` solid ground · `=` one-way platform (passable from below,
+    landable from above) · `P` player start · `G` goal. Every other character must be an
+    entity type's `glyph` in this project; create it with create_entity_type FIRST or the
+    save is rejected. Each level needs exactly one `P` and one `G` to be playable.
+
+    **One cell is one design unit.** A jump of `jump_height_units` (see get_game_config)
+    clears exactly that many cells, and `run_speed_units_per_s * hang_time_s` is roughly how
+    far the player travels in one jump — so check those numbers before deciding how wide a
+    gap or how tall a ledge should be. A level the player cannot cross is the easiest mistake
+    to make here.
+
+    Replaces the whole grid, so send the complete rows list. Pass `intro_scene_id` to also
+    set which dialogue scene plays when the level starts (it must be a scene of this level).
+    """
+    if not rows or not all(isinstance(r, str) for r in rows):
+        raise client.ApiError("rows must be a non-empty list of strings.")
+    width = len(rows[0])
+    ragged = [i for i, r in enumerate(rows) if len(r) != width]
+    if ragged:
+        raise client.ApiError(
+            f"Every row must be the same length. Row 0 is {width} characters; "
+            f"rows {ragged} differ."
+        )
+    payload: dict[str, Any] = {
+        "layout": {"width": width, "height": len(rows), "rows": rows}
+    }
+    if intro_scene_id is not None:
+        payload["intro_scene_id"] = intro_scene_id
+    return await client.request("PATCH", f"/levels/{level_id}", json=payload)
+
+
+@mcp.tool()
+async def create_entity_type(
+    project_id: int,
+    name: str,
+    glyph: str,
+    category: str = "enemy",
+    description: str = "",
+    behavior: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Add a placeable thing to the project's level palette, so it can be painted into a grid.
+
+    - `glyph` is ONE character, unique within the project, and may not be a built-in tile
+      (`.` `#` `=` `P` `G`). It is how this entity appears in a level's `rows`.
+    - `category` is `enemy`, `hazard`, `pickup` or `prop`.
+    - `behavior` is a bounded vocabulary, implemented literally by whoever builds the game:
+      `pattern` (`static` | `walk` | `patrol` | `fly`), `speed` in cells per second,
+      `harmful_on_touch` (bool), `stompable` (bool — jumping on top defeats it, the Mario
+      rule; when false, landing on it hurts instead).
+    - `description` is where everything the vocabulary can't express belongs, and a builder
+      is told to read it. "Breaks when hit from below", "turns at ledges but not walls",
+      "drops a coin when defeated" — write it here rather than inventing a new field.
+    """
+    return await client.post(
+        "/entities",
+        project_id=project_id,
+        name=name,
+        glyph=glyph,
+        category=category,
+        description=description,
+        behavior=behavior or {},
+    )
+
+
+@mcp.tool()
+async def update_entity_type(
+    entity_id: int,
+    name: str | None = None,
+    glyph: str | None = None,
+    category: str | None = None,
+    description: str | None = None,
+    behavior: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Change one entity type. Only the fields you pass are touched, but `behavior` replaces
+    the whole dict — read the current one first and merge rather than dropping keys.
+
+    Changing `glyph` does NOT rewrite levels that already use the old one, so repaint any
+    affected level with set_level_layout afterwards. Changing `name` changes the entity's
+    address (`entity:walker` becomes `entity:goomba`), which is intended — anyone who has
+    built it will be told to rename their engine artifact to match.
+    """
+    return await client.patch(
+        f"/entities/{entity_id}",
+        name=name,
+        glyph=glyph,
+        category=category,
+        description=description,
+        behavior=behavior,
+    )
+
+
+@mcp.tool()
+async def seed_entity_palette(project_id: int) -> list[dict[str, Any]]:
+    """Add the starter platformer palette — Walker `e`, Spikes `^`, Coin `o` — and return the
+    project's whole palette. Idempotent: anything whose name or glyph is already taken is
+    skipped, so it is safe on a project that has some of them."""
+    return await client.post(f"/projects/{project_id}/seed-entities")
+
+
+# --- Reading the design (the build side: slices of the gameblueprint export) -------------------
+# These wrap GET /projects/{id}/export — the canonical assembled document — rather than
+# re-deriving anything, so every slice agrees with every other. The export is cheap and
+# always current; it is refetched per call on purpose (no caching) so an agent never builds
+# from a design the creator has since changed.
+
+
+async def _blueprint(project_id: int) -> dict[str, Any]:
+    return await client.get(f"/projects/{project_id}/export")
+
+
+@mcp.tool()
+async def get_engine_conventions(engine: str = "godot") -> dict[str, Any]:
+    """How this design maps onto real files in a game engine. **Read before building.**
+
+    Covers the unit conversion (one grid cell = one design unit = a fixed number of
+    pixels, which is what makes the designer's jump height and gravity mean something),
+    where each kind of object goes, which node type it becomes, how the tile glyphs
+    translate, how to implement each entity behavior, what to do about dialogue, and the
+    `game_editor_sync.json` you should keep alongside the build.
+
+    These are prescribed for one reason: a later sync pass has to be able to find what you
+    built and compare it to the design. Layout that changes session to session makes "not
+    built" and "not found" the same answer. Within that, code structure and art are yours.
+
+    Only Godot is covered so far.
+    """
+    try:
+        return conventions.for_engine(engine)
+    except KeyError as exc:
+        raise client.ApiError(str(exc)) from exc
+
+
+@mcp.tool()
+async def get_manifest(project_id: int) -> dict[str, Any]:
+    """**Read this first.** A map of the whole design — every object, one line each.
+
+    Each entry has a stable `address` (`entity:goomba`, `system:movement`,
+    `scene:the_handoff`) — the name to use for this thing everywhere, including in engine
+    filenames and when reporting work back — plus a one-phrase `summary`, a content `hash`,
+    and `depends_on`.
+
+    Use it to decide what to pull in full: this index is small, the objects behind it are
+    not. Then call get_level_design / get_game_config / list_entity_types for the parts you
+    actually need.
+
+    `depends_on` lists **facts of the design, not a build order**: an exit locked by
+    `state:item_cellar_key` can't be opened before something grants that key (see that
+    state entry's `granted_by`), an ability gated on a variable needs it declared, a scene
+    needs the characters it casts. Sequence the work however you or the creator prefer —
+    nothing here tells you which system to build first, on purpose.
+
+    `hash` fingerprints each object's design. Record it alongside whatever you build from
+    it; when the hash later differs, that object's design changed and the build is stale.
+    `project.hash` covers the whole design, so one comparison answers "did anything change?"
+
+    Addresses follow renames: if the creator renames "Walker" to "Goomba" the address
+    becomes `entity:goomba`, `former_addresses` records the old one, and the engine-side
+    artifact should be renamed to match. Key your own records on the object's numeric `id`,
+    which never changes.
+    """
+    return await client.get(f"/projects/{project_id}/manifest")
+
+
+@mcp.tool()
+async def get_blueprint(project_id: int) -> dict[str, Any]:
+    """The complete game design as one `gameblueprint/0.1` document — read this to build the game.
+
+    Contains everything the design has decided: dimension/genre, per-system tuning with
+    **derived feel numbers** (jump height in grid units, hang time, hits-to-die) and
+    plain-language takeaways, the player's abilities, characters with resolved traits and
+    relationships, the entity palette and tile legend, and every level's layout grid,
+    entity coordinates, locations, connections and dialogue (as both a graph and ready
+    Yarn script).
+
+    **Treat these values as decisions, not suggestions** — if the design answers a question,
+    implement that answer instead of picking a genre-typical default. If something genuinely
+    isn't specified, say so rather than silently inventing it.
+
+    Large for a big project: prefer get_game_config + get_level_design when you are working
+    one level at a time.
+    """
+    return await _blueprint(project_id)
+
+
+@mcp.tool()
+async def get_game_config(project_id: int) -> dict[str, Any]:
+    """The project-wide design *values*: settings, system tuning, abilities, story variables, HUD.
+
+    The slice you need to scaffold a project and set up its systems. It deliberately does
+    not enumerate characters, entities or levels — get_manifest indexes those far more
+    cheaply, and list_entity_types / get_level_design pull them in full.
+
+    `systems[id].derived` carries the numbers to implement (`jump_height_units`,
+    `gravity_units_per_s2`, `hang_time_s`, `damage_per_hit`, `hits_to_die`) plus a
+    `takeaway` string stating the intended feel in words. One "unit" is one cell of a level's
+    layout grid, so a 3-unit jump clears a 3-cell wall.
+
+    `yarn_declarations` is a ready `<<declare>>` block for every story variable — write it to
+    a single Yarn file; the per-scene Yarn deliberately omits declares to avoid duplicate
+    declarations across files.
+    """
+    bp = await _blueprint(project_id)
+    return {
+        "format": bp.get("format"),
+        "project": bp.get("project"),
+        "hash": bp.get("hash"),
+        "systems": bp.get("systems"),
+        "abilities": bp.get("abilities"),
+        "state_schema": bp.get("state_schema"),
+        "yarn_declarations": bp.get("yarn_declarations"),
+        "hud_layout": bp.get("hud_layout"),
+    }
+
+
+@mcp.tool()
+async def get_level_design(level_id: int) -> dict[str, Any]:
+    """One level's full design: tile grid, entity placements, locations, and dialogue.
+
+    `layout.rows` is the level as ASCII, one character per cell — `(0,0)` is the **top-left**
+    cell, x grows rightward and y grows **downward**. `entities` is that same information
+    already flattened to `{glyph, x, y, entity_type_id}` coordinates; use whichever is easier.
+    Resolve glyphs through `tile_legend` (also returned here): `.` empty, `#` solid ground,
+    `=` one-way platform (collidable from above only), `P` player start, `G` goal, and one
+    glyph per entity type. `layout` is null when the designer hasn't drawn this level yet —
+    ask rather than inventing a layout.
+
+    `locations` is the narrative/spatial layer (places, their mood and props, and labeled —
+    sometimes requirement-locked — connections between them); `scenes` carries each dialogue
+    scene as a graph *and* as ready-to-compile Yarn. `on_complete.next_level_id` is where
+    finishing this level leads (null = end of game).
+    """
+    level = await client.get(f"/levels/{level_id}")
+    project_id = level.get("project_id")
+    if not project_id:
+        raise client.ApiError(
+            f"Level {level_id} has no project, so its design can't be assembled."
+        )
+    bp = await _blueprint(project_id)
+    for entry in bp.get("levels") or []:
+        if entry.get("id") == level_id:
+            return {
+                **entry,
+                "project_id": project_id,
+                "tile_legend": bp.get("tile_legend"),
+            }
+    raise client.ApiError(f"Level {level_id} was not found in project {project_id}'s blueprint.")
+
+
+@mcp.tool()
+async def list_entity_types(project_id: int) -> dict[str, Any]:
+    """The level palette — every placeable thing, plus the glyph legend for reading layouts.
+
+    Each entity type has a one-character `glyph` (how it appears in `layout.rows`), a
+    `category` (enemy / hazard / pickup / prop), a `description`, and a bounded `behavior`
+    dict: `pattern` (static | walk | patrol | fly), `speed` in grid cells per second,
+    `harmful_on_touch`, and `stompable` (Mario-style — jumping on top defeats it).
+    Implement those semantics exactly; free-form nuance lives in `description`.
+
+    `tile_legend` merges these glyphs with the five built-in tiles, so it is the complete
+    key for any level's grid.
+
+    `image_url` is usually empty, and that is fine — build the greybox. See
+    get_engine_conventions for the placeholder shape and per-category colours.
+    """
+    bp = await _blueprint(project_id)
+    return {"entity_types": bp.get("entity_types"), "tile_legend": bp.get("tile_legend")}
+
+
+# --- Reporting the build back (the write half of the loop) ------------------------------------
+@mcp.tool()
+async def report_built(
+    project_id: int,
+    address: str,
+    engine_path: str = "",
+    hash: str = "",
+    status: str = "built",
+    engine: str = "godot",
+    note: str = "",
+) -> dict[str, Any]:
+    """Tell the platform you built something. **Call this as you finish each object.**
+
+    The platform cannot see inside your engine project — there are no daemons and no
+    plugins, by design — so this report is the only way it learns the thing exists. Work you
+    don't report is indistinguishable from work never done.
+
+    - `address` must come from get_manifest. An invented address is rejected, because a
+      report nothing can match would look like unbuilt work forever.
+    - `hash` is that object's `hash` at the time you built it. **Always pass it.** It is what
+      lets the creator be told later that they changed the design after you built it —
+      without you, or anyone, re-reading the code.
+    - `engine_path` is where it lives (`res://entities/goomba.tscn`).
+    - `status` is `in_progress`, `built` (default), or `verified` (you ran it and saw it work).
+
+    Reporting the same object again updates the existing record, so it is safe to call after
+    every revision. The reply tells you if the object is already stale, or if the creator has
+    renamed it since — in which case rename the engine artifact and your sync manifest to
+    match.
+    """
+    return await client.post(
+        f"/projects/{project_id}/build-reports",
+        address=address,
+        engine_path=engine_path,
+        hash=hash,
+        status=status,
+        engine=engine,
+        note=note,
+    )
+
+
+@mcp.tool()
+async def get_build_status(project_id: int, engine: str = "godot") -> dict[str, Any]:
+    """What has been built so far, what has gone stale, and how much of the design is done.
+
+    Read this at the **start of a session** to pick up where the last one left off, and
+    whenever you want to know what changed since.
+
+    Per object: `status` (not_built / in_progress / built / verified), `stale` (the design
+    changed after it was built — re-read it and update the build), and `renamed` (the
+    creator renamed it, so the engine artifact and your sync manifest entry are named wrong).
+
+    `summary.percent_built` counts only objects that are built **and** current — a stale
+    build is work still owed, not work finished. `orphaned_reports` lists things you built
+    whose design object has since been deleted; those files are now unowned.
+    """
+    return await client.get(f"/projects/{project_id}/build-status", engine=engine)
+
+
 # --- Resources (read-only context the agent can pull in) --------------------------------------
 @mcp.resource("game-editor://projects", name="Projects", mime_type="application/json")
 async def projects_resource() -> list[dict[str, Any]]:
@@ -716,20 +1069,62 @@ async def projects_resource() -> list[dict[str, Any]]:
     "game-editor://projects/{project_id}", name="Project overview", mime_type="application/json"
 )
 async def project_resource(project_id: str) -> dict[str, Any]:
-    """A project with its levels, each level's scenes, and the project's characters — the
-    orienting snapshot to read before authoring anything."""
-    project = await client.get(f"/projects/{project_id}")
-    levels = await client.get("/levels", project_id=project_id)
-    scenes = await client.get("/scenes")
-    characters = await client.get("/characters", project_id=project_id)
-    by_level: dict[int, list[dict[str, Any]]] = {}
-    for scene in scenes:
-        by_level.setdefault(scene["level_id"], []).append(scene)
+    """A project with its levels, each level's scenes and locations, and the project's
+    characters and abilities — the orienting snapshot to read before authoring anything.
+
+    Built from the blueprint export so it can't drift from what the build tools serve; the
+    per-level dialogue graphs are summarized rather than inlined to keep it readable (pull a
+    full graph with get_level_design or the scene's Yarn resource)."""
+    bp = await _blueprint(int(project_id))
     return {
-        "project": project,
-        "levels": [{**level, "scenes": by_level.get(level["id"], [])} for level in levels],
-        "characters": characters,
+        "project": bp.get("project"),
+        "systems": {
+            sys_id: state.get("derived") or {"enabled": state.get("enabled")}
+            for sys_id, state in (bp.get("systems") or {}).items()
+            if state.get("enabled")
+        },
+        "abilities": [
+            {"id": a["id"], "name": a["name"], "description": a["description"]}
+            for a in bp.get("abilities") or []
+        ],
+        "levels": [
+            {
+                "id": level.get("id"),
+                "name": level.get("name"),
+                "order": level.get("order"),
+                "has_layout": bool(level.get("layout")),
+                "locations": [
+                    {"id": loc["id"], "name": loc["name"]} for loc in level.get("locations") or []
+                ],
+                "scenes": [
+                    {
+                        "id": scene["id"],
+                        "name": scene["name"],
+                        "is_intro": scene["is_intro"],
+                        "node_count": len((scene.get("dialogue") or {}).get("nodes") or []),
+                    }
+                    for scene in level.get("scenes") or []
+                ],
+            }
+            for level in bp.get("levels") or []
+        ],
+        "characters": [
+            {"id": c["id"], "name": c["name"], "description": c["description"]}
+            for c in bp.get("characters") or []
+        ],
+        "state_schema": bp.get("state_schema"),
     }
+
+
+@mcp.resource(
+    "game-editor://projects/{project_id}/blueprint",
+    name="Game blueprint",
+    mime_type="application/json",
+)
+async def blueprint_resource(project_id: str) -> dict[str, Any]:
+    """The complete `gameblueprint/0.1` design document for a project — the whole plan an
+    engine implementation should be built from. Same content as the get_blueprint tool."""
+    return await _blueprint(int(project_id))
 
 
 @mcp.resource(
@@ -738,6 +1133,16 @@ async def project_resource(project_id: str) -> dict[str, Any]:
 async def scene_yarn_resource(scene_id: str) -> str:
     """A scene's dialogue graph as Yarn script — the readable form of the whole conversation."""
     return (await client.get(f"/scenes/{scene_id}/export-yarn"))["text"]
+
+@mcp.resource(
+    "game-editor://conventions/{engine}",
+    name="Engine conventions",
+    mime_type="application/json",
+)
+async def conventions_resource(engine: str) -> dict[str, Any]:
+    """How design objects map onto files in a given engine — the same content as the
+    get_engine_conventions tool. Only `godot` is covered so far."""
+    return conventions.for_engine(engine)
 
 
 # --- Prompts ----------------------------------------------------------------------------------
@@ -767,6 +1172,71 @@ Then, in order:
 
 Ask before deleting or overwriting anything that already exists."""
 
+
+@mcp.prompt(name="kickoff", title="Build a game from its blueprint")
+def kickoff_prompt(project_id: str, target: str = "") -> str:
+    """Brief the agent to build an already-designed game in an engine, from the blueprint."""
+    engine = (target or "godot").strip().lower()
+    known = engine in conventions.ENGINES
+    engine_step = (
+        f"Call get_engine_conventions('{engine}') — it says exactly where each kind of "
+        "object goes, what node type it becomes, how the tile glyphs translate, and the "
+        "pixels-per-cell constant that makes the design's numbers mean something."
+        if known
+        else (
+            f"No conventions exist for '{target}' yet — only Godot. Agree a file layout and "
+            "unit scale with the creator BEFORE building, and write it down, because a later "
+            "sync pass has to be able to find what you built."
+        )
+    )
+    return f"""Build project {project_id} in {target or "Godot"} from its design in game-editor.
+
+The design is already made. Your job is to implement it faithfully, not to redesign it.
+
+1. Read the map. Call get_manifest({project_id}) — one line per design object, each with the
+   stable `address` to use for it everywhere. Then pull only what you need:
+   get_game_config({project_id}) for project-wide values, get_level_design(level_id) for a
+   level, list_entity_types({project_id}) for the glyph legend. get_blueprint({project_id})
+   returns everything at once if the game is small.
+
+   `depends_on` records what the design entails — a locked exit needs its key to exist
+   first — not an order we are prescribing. Build in whatever order you and the creator
+   choose; if the creator told you where to start, start there.
+
+2. Read the conventions. {engine_step}
+
+3. Honor the numbers. `systems[id].derived` holds the designer's tuned feel —
+   `jump_height_units`, `gravity_units_per_s2`, `hang_time_s`, `damage_per_hit`,
+   `hits_to_die` — each with a `takeaway` sentence saying what it should feel like. One
+   "unit" is one cell of the level grid, so a 3-unit jump clears a 3-cell wall. Convert with
+   the conventions' pixels-per-cell, once, and say which value you used.
+
+4. Expect no art. Build the greybox the conventions describe — flat coloured rectangles,
+   one cell each — and keep going. Do not stop to source or generate sprites, and do not
+   leave anything invisible; a design that specifies geometry and behaviour is playable
+   before it is pretty.
+
+5. Build each level from `layout.rows` exactly: `(0,0)` is top-left and y grows downward,
+   which matches Godot 2D, so there is no vertical flip. Implement each entity's `behavior`
+   dict (`pattern`, `speed`, `harmful_on_touch`, `stompable`) as written; anything it can't
+   express is in `description`, so read that too.
+
+6. Report each object as you finish it: call report_built({project_id}, address, engine_path,
+   hash) with the object's `hash` from the manifest, and write the same three facts into
+   `game_editor_sync.json`. The platform can't see your project, so unreported work is
+   invisible to the creator — and the hash is what later tells them they changed a design
+   you had already built.
+
+   If you are resuming, start with get_build_status({project_id}) instead of rebuilding:
+   it says what exists, what went `stale` (design changed since you built it) and what was
+   `renamed` (rename the artifact to match).
+
+7. **Never invent a value the design already answers.** If you need something the design
+   doesn't specify, collect those gaps and list them at the end rather than filling them
+   silently — the creator would rather decide than discover your default later.
+
+Finish by summarizing what you built, the pixels-per-cell you used, and every gap you had to
+leave open."""
 
 if __name__ == "__main__":
     mcp.run()
