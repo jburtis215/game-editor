@@ -125,3 +125,29 @@ def upload_image(
     except (BotoCoreError, ClientError) as exc:
         raise StorageError(str(exc)) from exc
     return _public_url(key), key
+
+
+def download(key: str) -> tuple[bytes, str]:
+    """Fetch a stored object's bytes and content type by key.
+
+    Exists so the API can *serve* an asset itself rather than handing out a presigned URL.
+    A presigned URL expires (an hour by default), which is fine for a browser rendering a
+    page and wrong for an agent: a build session outlives the link, and an asset reference
+    that dies halfway through a build is worse than no asset at all. Streaming through the
+    API gives a stable address that stays valid as long as the object does.
+
+    Raises StorageNotConfigured if AWS isn't set up, or StorageError if the object can't be
+    read (missing key, permissions, network).
+    """
+    if not is_configured():
+        raise StorageNotConfigured(
+            "Image storage isn't configured — set AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, "
+            "AWS_REGION and AWS_S3_BUCKET in backend/.env."
+        )
+    if not key:
+        raise StorageError("No object key.")
+    try:
+        response = _client().get_object(Bucket=settings.AWS_S3_BUCKET, Key=key)
+        return response["Body"].read(), response.get("ContentType", "application/octet-stream")
+    except (BotoCoreError, ClientError) as exc:
+        raise StorageError(str(exc)) from exc

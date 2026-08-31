@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import {
   api,
   API_BASE,
@@ -21,6 +22,7 @@ type LocationFields = {
   scale: string;
   mood: string;
   props: string[];
+  extent: string;
 };
 
 const KINDS = [
@@ -37,10 +39,22 @@ const SCALES = [
   { value: 'vast', label: 'Vast' },
 ];
 
+// How much of the level this place occupies. Distinct from SCALES above, which is how big it
+// *feels*: a "vast" hall can occupy one small area of the grid.
+const EXTENTS = [
+  { value: '', label: 'Not placed', hint: 'No space on the grid yet' },
+  { value: 'level', label: 'The whole level', hint: 'This place is the level' },
+  { value: 'area', label: 'An area of the level', hint: 'Draw its box in the layout editor' },
+  { value: 'point', label: 'A single spot', hint: 'One cell — a well, a door, a sign' },
+];
+
 type RequirementKind = 'remembered_choice' | 'has_item' | 'stat_check' | 'flag';
 
 interface LocationCardProps {
   location: Location;
+  /** Route ids, so the card can link to the level's layout editor to draw a region. */
+  projectId: string;
+  levelId: string;
   /** The project's characters — who can be placed here. */
   characters: Character[];
   /** The level's *other* locations — where this one can connect to. */
@@ -64,6 +78,8 @@ interface LocationCardProps {
  */
 export default function LocationCard({
   location,
+  projectId,
+  levelId,
   characters,
   siblings,
   scenes,
@@ -85,6 +101,7 @@ export default function LocationCard({
     scale: location.scale,
     mood: location.mood,
     props: location.props,
+    extent: location.extent,
   });
   const mounted = useRef(false);
   useEffect(() => {
@@ -392,6 +409,54 @@ export default function LocationCard({
             placeholder="smoky, candle-lit, too quiet"
           />
         </label>
+      </div>
+
+      {/* Where it sits on the level's grid — the binding that gives the place real space. */}
+      <div className="loc-card__section">
+        <h3 className="loc-card__section-title">Where it is</h3>
+        <div className="loc-fields">
+          <label className="loc-field loc-field--wide">
+            <span className="loc-field__label">Extent</span>
+            <select
+              className="loc-card__select"
+              value={fields.extent}
+              onChange={(e) => setField('extent', e.target.value)}
+            >
+              {EXTENTS.map((x) => (
+                <option key={x.value} value={x.value}>
+                  {x.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <p className="loc-place__state">
+          {fields.extent === 'level' ? (
+            <>This place covers the whole level.</>
+          ) : location.region ? (
+            <>
+              <strong>
+                {location.region.width}×{location.region.height}
+              </strong>{' '}
+              at ({location.region.x}, {location.region.y}) ·{' '}
+              <Link to={`/projects/${projectId}/levels/${levelId}/layout`}>
+                edit in the layout
+              </Link>
+            </>
+          ) : fields.extent === 'area' || fields.extent === 'point' ? (
+            <>
+              No box drawn yet —{' '}
+              <Link to={`/projects/${projectId}/levels/${levelId}/layout`}>
+                draw it in the layout editor
+              </Link>
+              .
+            </>
+          ) : (
+            <>
+              Not placed. Everything above is dressing until this place has somewhere to be.
+            </>
+          )}
+        </p>
       </div>
 
       {/* Props — the things in the room. */}

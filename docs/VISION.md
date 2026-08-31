@@ -180,9 +180,17 @@ and validating the whole thing against a real engine build.*
       *(Also: `mcp` + `httpx` were never declared as dependencies — the server had never
       been run. Now in `requirements.txt`, with `mcp` pinned `<2`.)*
 - [x] "Download blueprint" button on the Systems tab (augments the copy-only manifest).
-- [ ] Validate with the target demo: point Claude Code at an empty Godot project + the
-      server; "build level 1"; confirm it pulls real design facts instead of inventing
-      them.
+- [x] **Validated against a real Godot build** (Aug 2026). Claude Code + the MCP server
+      built the platformer demo (project 4) into an empty Godot project — 27 of 28 objects,
+      the 28th an empty scene it correctly declined to build and said why. Conventions were
+      followed exactly (file layout per address type, greybox tileset, the GDScript dialogue
+      runner), `report_built` was called per object, and staleness detection now works on
+      live data with no engine access. The run's two findings drove what came next: **7
+      values the design never specified** (flagged as `GAP_*` constants in the generated
+      GDScript, and the reason `report_deviation` exists), and **locations don't survive the
+      trip** — all three came back "transcribed as data, no playable space", because nothing
+      ties a location to a region of the tile grid. That second one is a genuine gap in the
+      design model and is not yet on any phase below.
 
 ### Phase 2 — Semantic model gaps (makes the blueprint unambiguous)
 *Holes a building agent currently has to fill with plausible genre defaults — the exact
@@ -251,16 +259,35 @@ data we could serve.*
       `percent_built` counts only built-**and**-current objects — a stale build is work still
       owed. Orphaned reports (design object deleted, engine file left behind) are surfaced
       rather than hidden.
-- [ ] **Policy — decided:** engine changes that *contradict* the design arrive as pending
+- [x] **Policy — decided and implemented:** engine changes that *contradict* the design arrive as pending
       deviations the creator accepts or rejects. Values the design never specified (the
       agent had to invent one) are recorded as design, flagged as originating in the build —
       nothing is being overwritten, and the design gets more complete rather than drifting.
-- [ ] `report_deviation` write tool + pending-deviations model + reconcile UI
-      (accept-into-design / flag-for-rework), keyed by address — including **field**
-      addresses (`system:movement.gravity`) so a mismatch names exactly one value.
-- [ ] `get_design_values`: the same design as a **flat** list of `{address, value}` rows.
-      The nested blueprint is right for comprehension and wrong for diffing; `/sync-check`
-      needs something a mechanical comparison can walk.
+- [x] **`report_deviation` + the pending-deviations model** (Aug 2026,
+      `api/services/deviations.py` + the `Deviation` model). Keyed by **field** addresses
+      (`system:movement.gravity`), so a mismatch names exactly one value — "the movement
+      system differs" is not something a creator can accept or reject. The policy above is
+      implemented as the split between the two kinds: a conflict is held **pending**, a gap
+      is written into the design and flagged as build-originated.
+      Two decisions worth recording. **The platform reads the design value itself** rather
+      than accepting it from the reporter — otherwise an agent could misquote the design and
+      have a real contradiction written straight in as a harmless gap, which is precisely the
+      silent drift the model exists to prevent. And **only the knob bags are writable** (a
+      system's `values`, an ability's `params`, an entity's `behavior`): those are collections
+      of tuned numbers, the shape engines actually invent values in, and every gap the Godot
+      run produced was one. Authored prose and structure stay read-only — a build has no
+      standing to rewrite what a creator wrote, and a silent name change would break the
+      address the whole loop is keyed on. Applying a gap also **re-points the object's build
+      record at its new hash**, since writing a build's own value into the design would
+      otherwise mark that build stale the instant it was reconciled.
+- [x] `get_design_values` (Aug 2026): the same design as a **flat** list of
+      `{address, value, writable}` rows — 174 of them for the demo project, 49 writable. The
+      nested blueprint is right for comprehension and wrong for diffing; `/sync-check` needs
+      something a mechanical comparison can walk.
+- [ ] **Reconcile UI**: pending deviations on the project home with accept-into-design /
+      flag-for-rework. The model, the API and the MCP tools are in place, so this is the last
+      piece before the loop is closed for a non-coder — today a creator has to resolve a
+      deviation over the API.
 - [ ] `post_build_snapshot` write tool → S3 (reuse `storage.py` pipeline) → snapshots
       render in the "best available representation" slot next to design mockups.
 - [ ] Project-home rollup: % built, pending deviations count, latest snapshots.

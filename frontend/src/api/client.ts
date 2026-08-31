@@ -30,6 +30,7 @@ export type DialogueParent = components['schemas']['DialogueParentOut'];
 
 export type User = components['schemas']['UserOut'];
 export type EntityType = components['schemas']['EntityTypeOut'];
+export type TileType = components['schemas']['TileTypeOut'];
 
 /** Level.layout shape: ASCII grid rows + dimensions (see docs/blueprint-schema.md). */
 export type LevelLayout = { width: number; height: number; rows: string[] };

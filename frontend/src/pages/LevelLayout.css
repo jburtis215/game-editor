@@ -220,3 +220,248 @@
   margin-top: 0.8rem;
   max-width: 640px;
 }
+
+/* --- Location mode: boxes drawn over the grid to say which place is where ------------- */
+
+.layout-mode {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.layout-mode__btn {
+  padding: 0.35rem 0.75rem;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.layout-mode__btn:hover {
+  color: var(--text);
+}
+
+.layout-mode__btn--active {
+  background: color-mix(in srgb, var(--orange) 22%, transparent);
+  color: var(--text);
+}
+
+/* The overlays are absolutely positioned against the grid's padding box, so the grid has to
+   establish the containing block. */
+.layout-grid {
+  position: relative;
+}
+
+/* While placing, the cells themselves shouldn't look clickable-for-painting. */
+.layout-grid--locating .cell {
+  cursor: crosshair;
+}
+
+.layout-region {
+  position: absolute;
+  border: 1.5px solid;
+  border-radius: 3px;
+  /* Clicks belong to the cells underneath — the overlay is a label, not a target. Without
+     this, a box would swallow the drag that starts inside it. */
+  pointer-events: none;
+  display: flex;
+  align-items: flex-start;
+}
+
+.layout-region--active {
+  border-width: 2.5px;
+}
+
+.layout-region--drafting {
+  background: color-mix(in srgb, var(--orange) 25%, transparent);
+  border-color: var(--orange);
+  border-style: dashed;
+}
+
+/* A box that no longer fits — the grid was shrunk after the place was drawn. */
+.layout-region--outside {
+  border-style: dotted;
+  border-color: #e5484d;
+}
+
+.layout-region__tag {
+  font-size: 0.65rem;
+  line-height: 1;
+  padding: 2px 4px;
+  margin: 2px;
+  border-radius: 3px;
+  background: var(--bg-0);
+  color: var(--text);
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.layout-place__name {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  text-align: left;
+}
+
+.layout-place__where {
+  color: var(--muted);
+  font-size: 0.7rem;
+}
+
+.layout-place__clear {
+  margin-top: 0.5rem;
+  width: 100%;
+  padding: 0.35rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.layout-place__clear:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.layout-place__clear:not(:disabled):hover {
+  color: var(--text);
+  border-color: var(--muted);
+}
+
+/* --- Sprite scale: how big an entity's art reads against the level -------------------- */
+
+/* The marker may overflow its cell (that is what scaling past 1 means), so the cell can't
+   clip and stacking has to put bigger sprites above their neighbours. */
+.layout-grid .cell {
+  overflow: visible;
+  position: relative;
+}
+
+.cell__sprite {
+  display: grid;
+  place-items: center;
+  background-color: inherit;
+  background-size: contain;
+  background-repeat: no-repeat;
+  background-position: center;
+  border-radius: 2px;
+  font-size: 0.6rem;
+  line-height: 1;
+  pointer-events: none;
+}
+
+.layout-scale {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--line);
+}
+
+.layout-scale__label {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.5rem;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.layout-scale__value {
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+.layout-scale__slider {
+  width: 100%;
+  margin: 0.4rem 0 0.3rem;
+  accent-color: var(--orange);
+}
+
+.layout-scale__reset {
+  width: 100%;
+  padding: 0.3rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.layout-scale__reset:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.layout-scale__reset:not(:disabled):hover {
+  color: var(--text);
+  border-color: var(--muted);
+}
+
+.layout-scale__link {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0.35rem 0;
+  font-size: 0.75rem;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.layout-scale__link input {
+  accent-color: var(--orange);
+}
+
+.layout-scale__footprint {
+  margin-bottom: 0.35rem;
+}
+
+.layout-scale__row + .layout-scale__row {
+  margin-top: 0.25rem;
+}
+
+/* The collision box, shown only when it has been unlinked from the art. */
+.cell__footprint {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  border: 1px dashed var(--text);
+  border-radius: 2px;
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+/* Custom terrain: fills its cell with the tile's own greybox colour. */
+.cell--terrain {
+  background: var(--bg-1);
+}
+
+.cell__terrain {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  font-size: 0.6rem;
+  line-height: 1;
+  pointer-events: none;
+}
+
+.layout-seed-link {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: var(--orange);
+  text-decoration: underline;
+  cursor: pointer;
+}

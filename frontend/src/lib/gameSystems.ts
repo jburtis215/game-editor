@@ -294,6 +294,51 @@ export const SYSTEMS: SystemDef[] = [
       { kind: 'slider', key: 'cameraFeel', label: 'Camera feel (locked → loose follow)', min: 0, max: 100, step: 5, unit: '% loose', defaultValue: 40 },
     ],
   },
+  {
+    id: 'progression',
+    name: 'Failure & Progress',
+    blurb: 'What happens when the player dies, and where they wake up',
+    icon: '🚩',
+    components: ['RespawnController', 'LivesTracker'],
+    questions: [
+      {
+        kind: 'single',
+        key: 'onDeath',
+        label: 'When the player dies, where do they restart?',
+        options: [
+          { id: 'checkpoint', label: 'Last checkpoint', description: 'Paint Checkpoint tiles to set them' },
+          { id: 'level-start', label: 'Start of the level', description: 'The classic arcade restart' },
+          { id: 'respawn-in-place', label: 'Where they fell', description: 'Forgiving — no lost ground' },
+          { id: 'game-over', label: 'Game over', description: 'Back to the very beginning' },
+        ],
+        defaultValue: 'checkpoint',
+      },
+      {
+        kind: 'single',
+        key: 'outOfBounds',
+        label: 'What happens if the player falls off the bottom of the level?',
+        options: [
+          { id: 'death', label: 'They die', description: 'A pit is a hazard' },
+          { id: 'blocked', label: 'Invisible floor', description: 'They cannot fall out at all' },
+          { id: 'wrap', label: 'Wrap to the top', description: 'They reappear above' },
+        ],
+        defaultValue: 'death',
+      },
+      {
+        kind: 'single',
+        key: 'lives',
+        label: 'Does the player have a limited number of tries?',
+        options: [
+          { id: 'unlimited', label: 'Unlimited', description: 'Retry forever' },
+          { id: 'lives', label: 'A stock of lives', description: 'Run out and the run ends' },
+          { id: 'one', label: 'One life', description: 'Permadeath' },
+        ],
+        defaultValue: 'unlimited',
+      },
+      { kind: 'slider', key: 'livesCount', label: 'How many lives to start with', min: 1, max: 9, step: 1, unit: ' lives', defaultValue: 3 },
+      { kind: 'slider', key: 'respawnDelay', label: 'Pause before respawning', min: 0, max: 3, step: 0.1, unit: 's', defaultValue: 0.8 },
+    ],
+  },
 ];
 
 /** Always-present components on every character (shown as the "foundation" base). */
@@ -361,6 +406,20 @@ const CONTROL_DEFAULTS: Record<string, { inputStyle: string; camera: string; cam
   rhythm: { inputStyle: 'point-and-click', camera: 'fixed-rooms', cameraFeel: 0 },
 };
 
+/**
+ * Per-genre failure rules. How a game treats death is a genre signature — an arcade
+ * platformer sends you back to a checkpoint with a stock of lives, a horror game takes
+ * everything. Left unseeded, this is exactly the kind of decision a building agent invents.
+ */
+const PROGRESSION_DEFAULTS: Record<string, Record<string, string | number>> = {
+  platformer: { onDeath: 'checkpoint', outOfBounds: 'death', lives: 'lives', livesCount: 3 },
+  shooter: { onDeath: 'checkpoint', outOfBounds: 'death', lives: 'unlimited' },
+  survival: { onDeath: 'game-over', outOfBounds: 'death', lives: 'one' },
+  horror: { onDeath: 'checkpoint', outOfBounds: 'blocked', lives: 'one' },
+  rpg: { onDeath: 'checkpoint', outOfBounds: 'blocked', lives: 'unlimited' },
+  racing: { onDeath: 'respawn-in-place', outOfBounds: 'death', lives: 'unlimited' },
+};
+
 /** Initial state tuned to a genre (which systems start enabled + their genre-specific answers). */
 export function genreDefaults(genre: string): ArchitectState {
   const base = initialState();
@@ -370,20 +429,22 @@ export function genreDefaults(genre: string): ArchitectState {
   };
   switch (genre) {
     case 'rpg': enable(['health', 'stamina', 'movement', 'magic', 'inventory', 'combat', 'dialogue']); break;
-    case 'shooter': enable(['health', 'stamina', 'movement', 'inventory', 'combat']); break;
-    case 'platformer': enable(['health', 'stamina', 'movement']); break;
+    case 'shooter': enable(['health', 'stamina', 'movement', 'inventory', 'combat', 'progression']); break;
+    case 'platformer': enable(['health', 'stamina', 'movement', 'progression']); break;
     case 'puzzle': enable(['inventory']); break;
     case 'card': enable(['health', 'magic']); break;
     case 'social': enable(['inventory', 'dialogue']); break;
-    case 'survival': enable(['health', 'stamina', 'movement', 'inventory', 'combat']); break;
+    case 'survival': enable(['health', 'stamina', 'movement', 'inventory', 'combat', 'progression']); break;
     case 'racing': enable(['stamina', 'movement']); break;
     case 'strategy': enable(['combat', 'inventory']); break;
-    case 'horror': enable(['health', 'stamina', 'movement', 'inventory']); break;
+    case 'horror': enable(['health', 'stamina', 'movement', 'inventory', 'progression']); break;
     case 'sandbox': enable(['health', 'stamina', 'movement', 'inventory', 'combat']); break;
     case 'fighting': enable(['health', 'stamina', 'movement', 'combat']); break;
   }
   const controls = CONTROL_DEFAULTS[genre];
   if (controls) base.controls.values = { ...base.controls.values, ...controls };
+  const progression = PROGRESSION_DEFAULTS[genre];
+  if (progression) base.progression.values = { ...base.progression.values, ...progression };
   return base;
 }
 

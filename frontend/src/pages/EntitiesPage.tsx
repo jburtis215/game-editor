@@ -292,6 +292,55 @@ export default function EntitiesPage() {
               </div>
             </div>
 
+            {/* How the uploaded image should be used. Only worth asking once art exists —
+                until then the builder greyboxes and none of this applies. */}
+            {selected.image_url && (
+              <div className="entity-editor__sprite">
+                <h3 className="entity-editor__sprite-title">Sprite geometry</h3>
+                <p className="entity-editor__sprite-hint">
+                  Sized in grid cells, not pixels — a 1×1 sprite fills one game unit.
+                </p>
+                <div className="entity-editor__sprite-fields">
+                  {([
+                    ['cells_wide', 'Cells wide', 1],
+                    ['cells_high', 'Cells high', 1],
+                    ['frames', 'Frames', 1],
+                    ['fps', 'FPS', 0],
+                  ] as const).map(([key, label, min]) => (
+                    <label key={key} className="entity-editor__sprite-field">
+                      <span>{label}</span>
+                      <input
+                        type="number"
+                        min={min}
+                        value={Number(selected.sprite?.[key] ?? (key === 'fps' ? 0 : 1))}
+                        onChange={(ev) =>
+                          void patch(selected.id, {
+                            sprite: {
+                              cells_wide: 1,
+                              cells_high: 1,
+                              frames: 1,
+                              fps: 0,
+                              ...(selected.sprite ?? {}),
+                              [key]: Number(ev.target.value) || min,
+                            },
+                          })
+                        }
+                      />
+                    </label>
+                  ))}
+                </div>
+                <p className="entity-editor__sprite-hint">
+                  {Number(selected.sprite?.frames ?? 1) > 1
+                    ? `${selected.sprite?.frames} frames read left to right${
+                        Number(selected.sprite?.fps ?? 0) > 0
+                          ? ` at ${selected.sprite?.fps} fps`
+                          : ' — set FPS above 0 to animate'
+                      }.`
+                    : 'A still image.'}
+                </p>
+              </div>
+            )}
+
             <button
               type="button"
               className="btn entity-editor__delete"
