@@ -152,7 +152,15 @@ tuning hints, and let `description` settle anything ambiguous.
     "harmful_on_touch": true,
     "stompable": true           // Mario-style: jumping on top defeats it
   },
-  "image_url": "https://…"      // presigned S3 URL, short-lived; "" if no image
+  "image_url": "https://…",     // presigned S3 URL, SHORT-LIVED — for the editor UI only
+  "asset_url": "/api/assets/entity/1",  // durable; "" when no art. Use THIS in a build.
+  "sprite": {                   // how to use that art; {} means a plain still, one cell
+    "cells_wide": 1, "cells_high": 1,   // footprint in GRID CELLS, not pixels
+    "frames": 4,                        // frames left-to-right in the image; 1 = still
+    "fps": 8,                           // 0 = not animated
+    "scale": 0.8                        // VISUAL multiplier only — draw at footprint x scale,
+                                        // keep collision on the unscaled footprint
+  }
 }
 ```
 
@@ -217,6 +225,32 @@ use whichever form is easier:
 (`"unknown": true` marks a glyph with no matching entity type — the API rejects these on
 save, so it only appears in legacy/hand-seeded data. Treat as empty.)
 
+## tile_types
+
+The project's **terrain** palette — the ground, as opposed to `entity_types`, which are the
+actors standing on it. Both share one glyph namespace with the built-ins, so resolve any glyph
+through the level's `tile_legend`.
+
+```jsonc
+{
+  "id": 4, "name": "Ice", "glyph": "i",
+  "collision": "solid",              // solid | none | one_way
+  "behavior": {                      // bounded vocabulary; unknown keys are rejected on write
+    "friction": "slippery"           // normal|slippery|sticky · harmful+damage · bounce ·
+  },                                 // climbable · swimmable · conveyor · breakable · checkpoint
+  "description": "Slippery ground. The player keeps sliding after they stop steering.",
+  "color": "#7fd4f0",                // greybox colour — use it exactly
+  "order": 0
+}
+```
+
+**Read `description`.** `behavior` is deliberately small so it stays mechanically
+implementable; anything a creator invented that it cannot express is written in the
+description in their own words ("walking through this flips gravity"). Implement `behavior`
+and honour `description`; where they appear to disagree, the description is the intent. If a
+description asks for something genuinely unbuildable, `report_deviation` rather than
+approximating it silently.
+
 ## locations
 
 A level's **places** — the narrative/spatial layer, orthogonal to the tile grid. A level can
@@ -230,12 +264,26 @@ conversation hub), or both.
   "scale": "open",             // cramped | room | open | vast | ""
   "mood": "sunny, brisk",      // free text — the designer's felt sense of the place
   "props": ["pipes", "question blocks"],   // what's actually in it; don't invent extras
+  "extent": "area",            // level | area | point | "" (unplaced)
+  "region": { "x": 30, "y": 8, "width": 6, "height": 4 },  // cells; null when unplaced
   "image_url": "https://… or ''",          // presigned reference art, short-lived
+  "asset_url": "/api/assets/location/3",   // durable reference art; "" when none
   "characters": [ { "id": 5, "name": "Mario" } ],   // who is present here
   "scene_ids": [8],                                  // dialogue scenes set here
   "connections": [ /* the exits, see below */ ]
 }
 ```
+
+`extent` + `region` bind the place to real space on the level's grid — same frame as
+`layout.rows` and the entity coordinates (top-left origin, y down), so nothing needs
+converting. `extent: "level"` is resolved here to the whole grid, so every *placed* location
+carries a rectangle and reads the same way. `extent: ""` with `region: null` means the
+creator hasn't placed it: build its dialogue and treat its detail as context, but don't
+invent a region — report it with `report_deviation` instead. Locations may overlap and nest
+(a well inside a hillside); that is design, not an error.
+
+Note `scale` and `extent` are different axes: `scale` is how big the place *feels*, `extent`
+is how much of the level it *occupies*. A "vast" hall can sit in one small area.
 
 **Connections are the world graph** — the room-and-exit structure, serialized *relative to
 the location whose row they appear on*:
@@ -261,6 +309,8 @@ is lock-and-key design, and traversal order falls out of it.
 ```jsonc
 {
   "id": 5, "name": "Elara", "description": "…", "image_url": "https://… or ''",
+  "asset_url": "/api/assets/character/5",  // durable; "" when none. Prefer over image_url.
+  "sprite": { "cells_wide": 1, "cells_high": 1, "frames": 1, "fps": 0, "scale": 1.0 },
   "relationships": [ { "to_character_id": 7, "to_name": "Bram", "relationship": "mentor of" } ],
   "traits": [
     { "key": "power", "label": "Power", "type": "number", "min": 0, "max": 100,

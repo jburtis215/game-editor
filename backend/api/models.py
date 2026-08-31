@@ -46,6 +46,9 @@ class Project(models.Model):
     # Unlike `systems` (answers only, definitions in code), the full definition is stored because
     # traits can be custom, so no code catalog can describe them.
     character_traits = models.JSONField(default=list, blank=True)
+    # Uploaded art's S3 object key. Browser URLs are presigned from this at read time
+    # (storage.view_url); builds use the durable /api/assets/... path instead.
+    image_key = models.CharField(max_length=500, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -81,6 +84,9 @@ class Ability(models.Model):
     params = models.JSONField(default=dict, blank=True)
     # Same bounded vocabulary as Dialogue.requirements; [] = available from the start.
     unlock_requirements = models.JSONField(default=list, blank=True)
+    # Uploaded art's S3 object key. Browser URLs are presigned from this at read time
+    # (storage.view_url); builds use the durable /api/assets/... path instead.
+    image_key = models.CharField(max_length=500, blank=True, default="")
     order = models.PositiveIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -112,6 +118,9 @@ class Level(models.Model):
     name = models.CharField(max_length=100)
     order = models.PositiveIntegerField(default=0)
     layout = models.JSONField(default=dict, blank=True)
+    # Uploaded art's S3 object key. Browser URLs are presigned from this at read time
+    # (storage.view_url); builds use the durable /api/assets/... path instead.
+    image_key = models.CharField(max_length=500, blank=True, default="")
     intro_scene = models.ForeignKey(
         "Scene", null=True, blank=True, on_delete=models.SET_NULL, related_name="intro_for_levels"
     )
@@ -160,6 +169,12 @@ class EntityType(models.Model):
     image_key = models.CharField(max_length=500, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    # How to *use* the uploaded image, when there is one: {"cells_wide", "cells_high",
+    # "frames", "fps"}. A bare PNG doesn't say whether it is one sprite or a four-frame strip,
+    # and an agent that guesses wrong stretches a sheet across a single cell. Sizes are in grid
+    # cells, not pixels, so the art stays tied to the design's unit (one cell = one game unit)
+    # and survives a change of pixels-per-cell. Empty {} means "a plain single image".
+    sprite = models.JSONField(default=dict, blank=True)
 
     class Meta:
         ordering = ["name", "id"]
@@ -184,6 +199,9 @@ class Character(models.Model):
     # "Characters/Project-1/character-2/<uuid>.png". Blank = none yet. The browser-facing URL is
     # derived from this at read time (a presigned GET URL) — see storage.view_url().
     image_key = models.CharField(max_length=500, blank=True, default="")
+    # Same shape and purpose as EntityType.sprite — a character who appears in the world needs
+    # the same "how do I use this image" answer as anything else drawn on the grid.
+    sprite = models.JSONField(default=dict, blank=True)
     # This character's traits: {"values": {key: value}, "own": [trait definition, ...]}.
     # `values` covers both the project's default traits (an override) and this character's own
     # ones; `own` holds definitions for traits only this character has. The project's defaults are
@@ -238,6 +256,14 @@ class Location(models.Model):
     invent — `kind`/`scale`/`mood`/`props` (what the place *is*, how big it feels, how it
     reads, and what's in it) and a reference image (`image_key`, same S3 pipeline as
     character portraits). `LocationConnection`s turn the flat list into a world graph.
+
+    `extent` + `region` bind the place to actual space on the level's tile grid. Without
+    them a location is a narrative grouping that a builder can read and then do nothing
+    with: the first Godot build reported every location as "transcribed as data — no cells
+    represent it, so it has no playable space", which meant mood, props, reference art and
+    locked exits all described somewhere the game could not point at. The binding stays
+    coarse on purpose — a rectangle, or the whole level — because this is a writer's object
+    ("the well is on the east side"), not an authored collision volume.
     """
 
     KIND_CHOICES = [("interior", "Interior"), ("exterior", "Exterior")]
@@ -246,6 +272,18 @@ class Location(models.Model):
         ("room", "Room"),
         ("open", "Open"),
         ("vast", "Vast"),
+    ]
+    # How much of the level this place *is*. `scale` above is how big it feels (writer's
+    # language); `extent` is how much space it occupies (a spatial fact a builder can act on).
+    # The two are deliberately separate: a "vast" throne room can occupy one small area, and a
+    # cramped corridor can run the length of a level.
+    EXTENT_LEVEL = "level"
+    EXTENT_AREA = "area"
+    EXTENT_POINT = "point"
+    EXTENT_CHOICES = [
+        (EXTENT_LEVEL, "The whole level"),
+        (EXTENT_AREA, "An area within the level"),
+        (EXTENT_POINT, "A single spot"),
     ]
 
     level = models.ForeignKey(Level, on_delete=models.CASCADE, related_name="locations")
@@ -264,6 +302,18 @@ class Location(models.Model):
     # The reference image's S3 object key, e.g. "Locations/Project-1/location-2/<uuid>.png".
     # Browser-facing URLs are presigned from this at read time — see storage.view_url().
     image_key = models.CharField(max_length=500, blank=True, default="")
+    # "level" | "area" | "point" | "" (unplaced). See EXTENT_CHOICES.
+    extent = models.CharField(max_length=20, choices=EXTENT_CHOICES, blank=True, default="")
+    # Where on the level's tile grid this place sits: {"x", "y", "width", "height"} in cells,
+    # top-left origin with y down (the same frame as `Level.layout` and the exported entity
+    # coordinates, so no conversion is ever needed). None for extent "level" (the whole grid)
+    # or for a location that hasn't been placed yet.
+    #
+    # One rectangle, not a list: a place that genuinely needs two disjoint boxes is usually two
+    # locations, and the creator can say so. Kept as a rect rather than a cell mask because a
+    # location is a *design* object — "the well is over there" — not a collision volume; the
+    # builder decides the actual hitbox.
+    region = models.JSONField(null=True, blank=True, default=None)
     # Characters present at this location (manually assigned, editable on the Locations page).
     characters = models.ManyToManyField(Character, related_name="locations", blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -566,3 +616,153 @@ class BuildRecord(models.Model):
 
     def __str__(self) -> str:
         return f"{self.address} -> {self.engine_path or '(no path)'} [{self.status}]"
+
+
+class Deviation(models.Model):
+    """A place where the build and the design disagree — or where the design was silent and
+    the build had to decide.
+
+    The return half of the loop. `BuildRecord` says *that* something was built; a Deviation
+    says the built thing doesn't match what the design asked for, and names the single value
+    at issue. Addresses may carry a field (`system:movement.gravity`) precisely so a mismatch
+    is one value and not a whole object — "the movement system differs" is not something a
+    creator can accept or reject.
+
+    Two kinds, treated differently on purpose (the policy is set out in `docs/VISION.md`):
+
+    - `CONFLICT` — the design specifies a value and the build uses a different one. The
+      design is canonical, so this is **pending** until the creator accepts it into the
+      design or rejects it as rework. Nothing is written behind their back.
+    - `GAP` — the design never specified this value at all and the agent had to invent one
+      (Godot's `GAP_*` constants are exactly this). There is nothing to overwrite and no
+      disagreement to adjudicate, so it is recorded straight into the design, marked as
+      having originated in the build. The design gets *more complete* rather than drifting.
+
+    `design_value` is read from the design by the platform rather than taken from the
+    reporter, so an agent cannot mislabel a conflict as a gap (or invent a disagreement)
+    by misquoting what the design said.
+    """
+
+    CONFLICT = "conflict"
+    GAP = "gap"
+    KIND_CHOICES = [(CONFLICT, "Contradicts the design"), (GAP, "Design was silent")]
+
+    PENDING = "pending"
+    ACCEPTED = "accepted"
+    REJECTED = "rejected"
+    STATUS_CHOICES = [
+        (PENDING, "Pending"),
+        (ACCEPTED, "Accepted into design"),
+        (REJECTED, "Rejected — rework the build"),
+    ]
+
+    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="deviations")
+    engine = models.CharField(max_length=30, default="godot")
+    # The full address as reported, field and all: `system:movement.gravity`.
+    address = models.CharField(max_length=250)
+    # Split out so the object can be found after a rename, and so every deviation against
+    # one object can be listed together.
+    base_address = models.CharField(max_length=200)
+    field = models.CharField(max_length=120, blank=True, default="")
+    object_type = models.CharField(max_length=20)
+    object_id = models.PositiveIntegerField(null=True, blank=True)
+
+    kind = models.CharField(max_length=20, choices=KIND_CHOICES)
+    design_value = models.JSONField(null=True, blank=True)
+    build_value = models.JSONField(null=True, blank=True)
+    # The object's design hash when the deviation was reported: lets a stale deviation
+    # ("the creator has since changed this anyway") be spotted the same way a stale build is.
+    design_hash = models.CharField(max_length=64, blank=True, default="")
+
+    engine_path = models.CharField(max_length=500, blank=True, default="")
+    note = models.TextField(blank=True, default="")
+
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=PENDING)
+    # True once the build's value has actually been written into the design. Separate from
+    # `status` because accepting a value the platform can't write is a real outcome: the
+    # creator agreed, and the design still needs a hand edit.
+    applied = models.BooleanField(default=False)
+    resolution_note = models.TextField(blank=True, default="")
+    resolved_at = models.DateTimeField(null=True, blank=True)
+
+    reported_at = models.DateTimeField(auto_now=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        constraints = [
+            # One open question per value. A second report about the same field updates the
+            # first rather than stacking duplicates the creator has to dismiss one by one.
+            models.UniqueConstraint(
+                fields=["project", "engine", "address"], name="uniq_deviation_address"
+            )
+        ]
+        indexes = [
+            models.Index(fields=["project", "status"]),
+            models.Index(fields=["project", "engine", "base_address"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.address}: design={self.design_value!r} build={self.build_value!r} [{self.status}]"
+
+
+class TileType(models.Model):
+    """A kind of terrain the creator can paint — ice, lava, a spring, a ladder, a checkpoint.
+
+    The deliberate mirror of `EntityType`. Entities are the *actors* on the grid; tiles are
+    the *ground* they move over, and until now the ground vocabulary was three glyphs —
+    empty, solid, one-way. Platformers are mostly made of terrain that does something, so
+    that gap meant a creator could not say "this bit is slippery" at all, and a moving
+    platform or a spring had to be smuggled in as a prop entity.
+
+    Reusing the entity pattern rather than inventing a "zone" concept is the point: same
+    glyph-on-a-grid painting, same palette, same legend, same export, same bounded-dict +
+    free-prose split. A creator who has painted an enemy already knows how to paint ice.
+
+    **The bounded/free split is what makes custom terrain work.** `collision` and `behavior`
+    are a small fixed vocabulary a builder implements mechanically. Anything that vocabulary
+    can't express goes in `description`, in the creator's own words, and the builder reads it
+    — exactly how `EntityType.description` already carries nuance past `behavior`. So "ice"
+    is a first-class tile with `friction: slippery`, and "a tile that reverses gravity" is a
+    tile whose description says so. Neither needs the platform to have anticipated it.
+    """
+
+    SOLID = "solid"
+    NONE = "none"
+    ONE_WAY = "one_way"
+    COLLISION_CHOICES = [
+        (SOLID, "Solid — blocks from every side"),
+        (NONE, "Passable — no collision"),
+        (ONE_WAY, "One-way — land on top, jump up through"),
+    ]
+
+    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="tile_types")
+    name = models.CharField(max_length=50)
+    # Shares one namespace with EntityType glyphs and the built-in tiles, because they all
+    # live in the same `Level.layout` grid — validated across all three on write.
+    glyph = models.CharField(max_length=1)
+    collision = models.CharField(max_length=10, choices=COLLISION_CHOICES, default=SOLID)
+    # Bounded knobs — see api/api.py TILE_BEHAVIOR_KEYS for the vocabulary and the MCP
+    # docstrings for what each one means to a builder.
+    behavior = models.JSONField(default=dict, blank=True)
+    # The escape hatch, and the reason custom terrain works at all: plain language for
+    # whatever `behavior` can't say. Read by the building agent, same as an entity's.
+    description = models.TextField(blank=True, default="")
+    # Greybox colour, so the editor and the built game agree on what this terrain looks like
+    # before any art exists. Fixed per tile rather than derived, for the same reason the
+    # conventions fix the greybox palette: a build that changes appearance each run can't be
+    # compared against the last one.
+    color = models.CharField(max_length=9, blank=True, default="")
+    order = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["order", "name", "id"]
+        constraints = [
+            models.UniqueConstraint(fields=["project", "glyph"], name="uniq_tile_glyph"),
+            models.UniqueConstraint(fields=["project", "name"], name="uniq_tile_name"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.name} ('{self.glyph}')"

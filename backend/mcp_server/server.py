@@ -229,6 +229,9 @@ async def create_location(
     scale: "cramped" | "room" | "open" | "vast" | "" (unset).
     mood: free text — "smoky, candle-lit, too quiet".
     props: the things in the place — ["bar counter", "trapdoor behind the barrels"].
+
+    Use place_location afterwards to bind it to actual cells on the level's grid; until you
+    do, the place has no space in the built game and everything above is only dressing.
     """
     return await client.post(
         "/locations",
@@ -256,6 +259,7 @@ async def update_location(
 
     Same field vocabulary as create_location (kind: interior|exterior; scale:
     cramped|room|open|vast) — this is how you flesh out a place that already exists.
+    To move or resize it on the grid, use place_location.
     """
     return await client.patch(
         f"/locations/{location_id}",
@@ -265,6 +269,45 @@ async def update_location(
         scale=scale,
         mood=mood,
         props=props,
+    )
+
+
+@mcp.tool()
+async def place_location(
+    location_id: int,
+    extent: str,
+    x: int | None = None,
+    y: int | None = None,
+    width: int = 1,
+    height: int = 1,
+) -> dict[str, Any]:
+    """Bind a location to actual space on its level's tile grid.
+
+    This is what turns a place from a note into somewhere the game can point at. A location
+    with no placement still carries its mood, props and exits, but a builder has nowhere to
+    put any of it — so place every location that exists in the world.
+
+    extent:
+      "level" — this place *is* the whole level ("Sunny Hillside"). x/y/width/height ignored.
+      "area"  — a rectangle of the level ("the courtyard"). Needs x, y, width, height.
+      "point" — a single interactable spot (a well, a door, a sign). Needs x, y.
+      ""      — unplace it, keeping everything else.
+
+    Coordinates are grid cells, top-left origin with y growing downward — the same frame as
+    `layout.rows` and the exported entity coordinates, so a cell you read from the layout can
+    be passed straight in. The rectangle is validated against the level's grid and rejected if
+    it doesn't fit.
+
+    Places nest by design: a "Well" point and a "Farmhouse" area can both sit inside a
+    "Sunny Hillside" level-extent location. The platform doesn't police overlap — which
+    location a cell "belongs to" is a design question, and the smallest one containing it is
+    usually the answer.
+    """
+    region = None if extent in ("level", "") else {
+        "x": x or 0, "y": y or 0, "width": width, "height": height
+    }
+    return await client.patch(
+        f"/locations/{location_id}", extent=extent, region=region
     )
 
 
@@ -1058,6 +1101,217 @@ async def get_build_status(project_id: int, engine: str = "godot") -> dict[str, 
     return await client.get(f"/projects/{project_id}/build-status", engine=engine)
 
 
+@mcp.tool()
+async def list_tile_types(project_id: int) -> list[dict[str, Any]]:
+    """The project's terrain palette — the ground the player moves over.
+
+    Read this with list_entity_types before building any level. Entities are the *actors* on
+    the grid; tiles are the *terrain*, and a glyph in `layout.rows` that isn't a built-in
+    (`. # = P G`) is one or the other — resolve it through the level's `tile_legend`.
+
+    Each tile has `collision` (solid | none | one_way), a bounded `behavior` dict, and a
+    `description`. **Read the description.** The behavior vocabulary is deliberately small,
+    so anything the creator invented that it can't express is written there in plain language
+    — a tile that flips gravity is a normal thing for them to make, and the description is
+    where it lives. Implement `behavior` mechanically and honour `description` for the rest;
+    if the two seem to conflict, the description is the intent.
+    """
+    return await client.get("/tiles", project_id=project_id)
+
+
+@mcp.tool()
+async def create_tile_type(
+    project_id: int,
+    name: str,
+    glyph: str,
+    collision: str = "solid",
+    behavior: dict[str, Any] | None = None,
+    description: str = "",
+    color: str = "",
+) -> dict[str, Any]:
+    """Add a kind of terrain to the palette — ice, a spring, a ladder, or something invented.
+
+    `glyph` is one character, unique across the project's tiles AND entities AND the built-ins
+    (`. # = P G`), because they all share the one layout grid.
+
+    `collision`: "solid" (blocks every side) | "none" (passable) | "one_way" (land on top,
+    jump up through).
+
+    `behavior` is a bounded dict — unknown keys are rejected:
+        friction: "normal" | "slippery" | "sticky"
+        harmful: bool, damage: number      — lava, spikes
+        bounce: number                     — springs; roughly cells launched upward
+        climbable: bool                    — ladders
+        swimmable: bool                    — water
+        conveyor: number                   — cells/sec push along x, negative = leftward
+        breakable: bool
+        checkpoint: bool                   — passing it sets the respawn point
+
+    `description` is the important half for anything unusual: write what the terrain does in
+    plain language and the building agent reads it. That is how terrain the platform never
+    anticipated still gets built correctly — don't force an odd idea into `behavior`.
+
+    `color` is a hex greybox colour so the editor and the built game agree before art exists.
+    Use seed_tile_palette for the standard set (ice, lava, spring, ladder, water, checkpoint).
+    """
+    return await client.post(
+        "/tiles",
+        project_id=project_id,
+        name=name,
+        glyph=glyph,
+        collision=collision,
+        behavior=behavior or {},
+        description=description,
+        color=color,
+    )
+
+
+@mcp.tool()
+async def update_tile_type(
+    tile_id: int,
+    name: str | None = None,
+    glyph: str | None = None,
+    collision: str | None = None,
+    behavior: dict[str, Any] | None = None,
+    description: str | None = None,
+    color: str | None = None,
+) -> dict[str, Any]:
+    """Update a tile type. Omitted fields are unchanged; `behavior` replaces the whole dict,
+    so read the tile first and merge. Same vocabulary as create_tile_type."""
+    return await client.patch(
+        f"/tiles/{tile_id}",
+        name=name,
+        glyph=glyph,
+        collision=collision,
+        behavior=behavior,
+        description=description,
+        color=color,
+    )
+
+
+@mcp.tool()
+async def seed_tile_palette(project_id: int) -> list[dict[str, Any]]:
+    """Add the standard terrain starter set: ice, lava, spring, ladder, water, checkpoint.
+
+    Idempotent — anything whose name or glyph is already taken is skipped, so it is safe on a
+    project that has been customised. These become ordinary editable rows, not built-ins, so
+    the creator can retune or delete any of them afterwards.
+    """
+    return await client.post(f"/projects/{project_id}/seed-tiles")
+
+
+@mcp.tool()
+async def list_assets(project_id: int) -> dict[str, Any]:
+    """The art the creator has actually uploaded, with durable URLs and how to use it.
+
+    **Greybox first.** Most projects have little or no art, and a design that specifies
+    geometry and behaviour is meant to be playable before it is pretty — never stall a build
+    waiting on assets. Call this when the greybox works and you're ready to dress it, or when
+    the creator asks for their art.
+
+    Each entry has a stable `url` (download it into the project as a real file — do not fetch
+    at runtime) and, for sprites, a `sprite` block sized in **grid cells**, not pixels:
+    `cells_wide`/`cells_high` is the footprint in game units, `frames` is how many animation
+    frames the image holds left to right, and `fps` 0 means it is a still. Cells rather than
+    pixels means the art still fits if the engine's pixels-per-cell changes.
+
+    `scale` is separate and purely visual: draw the art at footprint x scale, but keep
+    collision on the unscaled footprint. The creator sets it by eye against the level (0.8
+    makes an enemy read smaller than a tile), so use the number as given.
+
+    An object that doesn't appear here has no art — greybox it and move on. Don't generate or
+    source a substitute: art the creator didn't choose is exactly the kind of guess the design
+    exists to prevent.
+
+    Note these URLs are relative to the API host and are *not* the `image_url` in the
+    blueprint, which is a short-lived presigned link meant for the editor UI.
+    """
+    return await client.get(f"/projects/{project_id}/assets")
+
+
+@mcp.tool()
+async def report_deviation(
+    project_id: int,
+    address: str,
+    build_value: Any = None,
+    engine: str = "godot",
+    engine_path: str = "",
+    note: str = "",
+) -> dict[str, Any]:
+    """Report one value where your build differs from the design — or one the design never
+    specified and you had to decide yourself. **Call this instead of quietly picking a number.**
+
+    Every invented value is a place the design stopped steering the game, and an unreported
+    one is invisible to the creator forever. Two cases, and you don't need to tell them apart
+    — the platform reads the design itself and decides:
+
+    - **The design specifies this and you did something else.** Held as a *pending deviation*
+      for the creator to accept or reject. The design is canonical, so nothing changes until
+      they say so: keep building to the design value unless told otherwise.
+    - **The design says nothing about it.** Recorded straight into the design as your value,
+      flagged as originating in the build. Nothing is overwritten — the design just gets more
+      complete. Keep using what you chose.
+
+    `address` must name **one value**, not an object: `system:movement.gravity`,
+    `ability:jump.coyote_time_s`, `entity:walker.speed`. Base addresses come from
+    get_manifest; get_design_values lists every field address with its current value.
+    A whole-object address is rejected — a creator can act on one number and cannot act on
+    "the movement system differs".
+
+    Pass only what your build does. There is no argument for what the design says, on purpose:
+    the platform looks that up so a misquote can't turn a real contradiction into a silent
+    edit of the design. Reporting a value the design already agrees with records nothing and
+    tells you so.
+    """
+    return await client.post(
+        f"/projects/{project_id}/deviations",
+        address=address,
+        build_value=build_value,
+        engine=engine,
+        engine_path=engine_path,
+        note=note,
+    )
+
+
+@mcp.tool()
+async def list_deviations(
+    project_id: int, status: str | None = None, engine: str | None = None
+) -> dict[str, Any]:
+    """Deviations reported between the design and the build, and which still need the creator.
+
+    Read this at the start of a session alongside get_build_status. A `rejected` deviation is
+    a decision against your build: the design value stands and that object needs rework. An
+    `accepted` one is now the design — rebuild to it if `applied` is true and your engine
+    still has the old value.
+
+    Filter with `status` (`pending`, `accepted`, `rejected`). `stale` on a row means the
+    creator edited that object after the deviation was filed, so the values it quotes may no
+    longer be the ones in question.
+    """
+    params: dict[str, Any] = {}
+    if status:
+        params["status"] = status
+    if engine:
+        params["engine"] = engine
+    return await client.get(f"/projects/{project_id}/deviations", **params)
+
+
+@mcp.tool()
+async def get_design_values(project_id: int) -> dict[str, Any]:
+    """The whole design flattened to one row per value — for checking a build against it.
+
+    The blueprint is nested for comprehension, which is the wrong shape for comparison. This
+    is the same design as a flat list of `{address, value}`, so a reconcile pass can walk it
+    and check each value against what the engine project actually contains, then
+    report_deviation for each mismatch.
+
+    `writable` marks values a deviation can be applied to automatically (a system's answers,
+    an ability's params, an entity's behavior — the tuned knobs). The rest is authored
+    content: still worth reporting a mismatch, but only the creator can change it.
+    """
+    return await client.get(f"/projects/{project_id}/design-values")
+
+
 # --- Resources (read-only context the agent can pull in) --------------------------------------
 @mcp.resource("game-editor://projects", name="Projects", mime_type="application/json")
 async def projects_resource() -> list[dict[str, Any]]:
@@ -1231,12 +1485,24 @@ The design is already made. Your job is to implement it faithfully, not to redes
    it says what exists, what went `stale` (design changed since you built it) and what was
    `renamed` (rename the artifact to match).
 
-7. **Never invent a value the design already answers.** If you need something the design
-   doesn't specify, collect those gaps and list them at the end rather than filling them
-   silently — the creator would rather decide than discover your default later.
+7. **Never invent a value the design already answers.** When the design genuinely doesn't
+   specify something you can't avoid deciding, pick a sensible value, use it, and report it
+   with report_deviation({project_id}, "system:health.regen_per_s", your_value) — one call
+   per value, naming the single field. The design was silent, so your value is recorded *as*
+   the design and flagged as having come from the build; nothing is overwritten and the
+   creator can see every choice you made on their behalf. A gap you don't report is a
+   decision they will only discover by reading your code.
 
-Finish by summarizing what you built, the pixels-per-cell you used, and every gap you had to
-leave open."""
+   Use the same tool when you had to contradict the design — a value that couldn't work in
+   the engine as specified. That is held as a pending deviation for the creator to accept or
+   reject; keep building to the design's value until they rule. Don't pass what you think the
+   design says: the platform reads that itself.
+
+   If you're checking an existing build rather than writing one, get_design_values({project_id})
+   is the design flattened to one row per value, which is the shape to compare against.
+
+Finish by summarizing what you built, the pixels-per-cell you used, and every value you had
+to decide yourself (each one reported via report_deviation)."""
 
 if __name__ == "__main__":
     mcp.run()

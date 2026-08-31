@@ -7,13 +7,16 @@ The schemas here drive the OpenAPI spec, which the frontend turns into typed TS
 import re
 
 from django.db.models import Q
+from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from ninja import File, NinjaAPI, Schema
 from ninja.files import UploadedFile
 
 from .services import (
+    assets,
     blueprint,
     build_reports,
+    deviations,
     imagegen,
     manifest,
     storage,
@@ -28,6 +31,7 @@ from .models import (
     BuildRecord,
     Character,
     CharacterRelationship,
+    Deviation,
     Dialogue,
     DialogueEdge,
     EntityType,
@@ -36,6 +40,7 @@ from .models import (
     LocationConnection,
     Project,
     Scene,
+    TileType,
     User,
 )
 
@@ -243,6 +248,16 @@ class EntityTypeOut(Schema):
     behavior: dict[str, Any] = {}
     project_id: int
     image_url: str = ""  # derived (presigned) from image_key at read time
+    # How to use the uploaded image: {cells_wide, cells_high, frames, fps} in grid cells.
+    sprite: dict[str, Any] = {}
+    # Durable download path, "" when nothing is uploaded. Unlike image_url this doesn't expire.
+    asset_url: str = ""
+
+    @staticmethod
+    def resolve_asset_url(obj) -> str:
+        key = obj.get("image_key", "") if isinstance(obj, dict) else getattr(obj, "image_key", "")
+        obj_id = obj.get("id") if isinstance(obj, dict) else getattr(obj, "id", None)
+        return assets.asset_url("entity", obj_id) if key and obj_id else ""
 
     @staticmethod
     def resolve_image_url(obj) -> str:
@@ -267,6 +282,9 @@ class EntityTypeUpdateIn(Schema):
     category: str | None = None
     description: str | None = None
     behavior: dict[str, Any] | None = None
+    # {cells_wide, cells_high, frames, fps} — how to use the uploaded image. Sizes are in grid
+    # cells, not pixels, so art stays tied to the design's unit.
+    sprite: dict[str, Any] | None = None
 
 
 class SceneOut(Schema):
@@ -325,6 +343,10 @@ class LocationOut(Schema):
     props: list[str] = []
     image_url: str = ""  # derived (presigned) from image_key at read time
     image_key: str = ""
+    # "level" | "area" | "point" | "" — how much of the level this place occupies.
+    extent: str = ""
+    # {"x","y","width","height"} in grid cells, or null for extent "level"/unplaced.
+    region: dict[str, int] | None = None
     characters: list[CharacterOut] = []
     connections: list[LocationConnectionOut] = []
 
@@ -338,6 +360,8 @@ class LocationCreateIn(Schema):
     scale: str | None = None  # "cramped" | "room" | "open" | "vast"
     mood: str | None = None
     props: list[str] | None = None
+    extent: str | None = None  # "level" | "area" | "point"
+    region: dict[str, int] | None = None
 
 
 class LocationUpdateIn(Schema):
@@ -350,6 +374,11 @@ class LocationUpdateIn(Schema):
     scale: str | None = None
     mood: str | None = None
     props: list[str] | None = None
+    # "level" | "area" | "point" | "" (unplace). Setting "level" clears `region`.
+    extent: str | None = None
+    # {"x","y","width","height"} in cells, validated against the level's layout when it has
+    # one. Pass null to unplace while keeping the extent.
+    region: dict[str, int] | None = None
 
 
 class LocationCharacterIn(Schema):
@@ -675,6 +704,9 @@ def _validate_entity_fields(
             return "glyph must be a single non-space character"
         if glyph in blueprint.BUILTIN_TILES:
             return f"glyph '{glyph}' is reserved (built-in tile)"
+        # Entities and tiles share the layout grid, so the check has to run both ways.
+        if TileType.objects.filter(project_id=project_id, glyph=glyph).exists():
+            return f"glyph '{glyph}' is already used by a tile type in this project"
         qs = EntityType.objects.filter(project_id=project_id, glyph=glyph)
         if exclude_pk is not None:
             qs = qs.exclude(pk=exclude_pk)
@@ -723,9 +755,13 @@ def update_entity_type(request, entity_id: int, payload: EntityTypeUpdateIn):
     )
     if error:
         return 400, {"error": error}
-    for field in ("name", "glyph", "category", "description", "behavior"):
+    for field in ("name", "glyph", "category", "description", "behavior", "sprite"):
         if field in data and data[field] is not None:
-            setattr(entity, field, data[field])
+            # Sprite geometry is coerced to the four known keys and clamped, so a zero frame
+            # count or a stray key can't reach a builder. Everything else is stored verbatim,
+            # as with `behavior`.
+            value = assets.normalize_sprite(data[field]) if field == "sprite" else data[field]
+            setattr(entity, field, value)
     entity.save()
     return entity
 
@@ -954,6 +990,421 @@ def get_build_status(request, project_id: int, engine: str = "godot"):
     return build_reports.build_status(project, engine=engine)
 
 
+class DeviationIn(Schema):
+    """One value where the build differs from the design, or where the design was silent.
+
+    `address` names a single value (`system:movement.gravity`), not an object — a creator
+    can act on one value and can't act on "the movement system differs". Note that there is
+    no field for what the *design* says: the platform reads that itself, so a misquote can't
+    turn a real contradiction into a gap that gets written straight in."""
+
+    address: str
+    build_value: Any = None
+    engine: str = "godot"
+    engine_path: str = ""
+    note: str = ""
+
+
+class DeviationResolveIn(Schema):
+    """The creator's call: `accept` adopts the build's value into the design, `reject` keeps
+    the design as it stands and leaves the build owing rework."""
+
+    action: str  # accept | reject
+    note: str = ""
+
+
+@api.post(
+    "/projects/{int:project_id}/deviations",
+    response={200: dict, 400: Error},
+    summary="Report one value where the build differs from the design",
+)
+def report_deviation(request, project_id: int, payload: DeviationIn):
+    """The other half of build truth flowing back. A contradiction of something the design
+    specifies is held **pending** for the creator — the design is canonical and is never
+    overwritten by a build. A value the design never specified is a *gap*: there is nothing
+    to overwrite and no disagreement to settle, so it is written into the design and flagged
+    as originating in the build, which makes the design more complete instead of letting it
+    drift. Reporting a value the design already agrees with records nothing and says so."""
+    project = get_object_or_404(Project, id=project_id)
+    try:
+        return 200, deviations.record_deviation(
+            project,
+            address=payload.address,
+            build_value=payload.build_value,
+            engine=payload.engine,
+            engine_path=payload.engine_path,
+            note=payload.note,
+        )
+    except deviations.DeviationError as exc:
+        return 400, {"error": str(exc)}
+
+
+@api.get(
+    "/projects/{int:project_id}/deviations",
+    response=dict,
+    summary="Deviations between design and build, and what still needs a decision",
+)
+def list_deviations(request, project_id: int, status: str | None = None, engine: str | None = None):
+    """Every reported deviation with a rollup. `stale` marks one whose object the creator has
+    edited since it was filed, so the values it quotes may no longer be the ones at issue."""
+    project = get_object_or_404(Project, id=project_id)
+    return deviations.list_deviations(project, status=status, engine=engine)
+
+
+@api.post(
+    "/projects/{int:project_id}/deviations/{int:deviation_id}/resolve",
+    response={200: dict, 400: Error},
+    summary="Accept a deviation into the design, or reject it as rework",
+)
+def resolve_deviation(request, project_id: int, deviation_id: int, payload: DeviationResolveIn):
+    """Accepting writes the build's value into the design where the address is a tuned value
+    (a system's answers, an ability's params, an entity's behavior) and says plainly when it
+    can't — accepting a name or a description is a real decision that still needs a hand
+    edit. Rejecting leaves the design alone, which makes the object work still owed."""
+    project = get_object_or_404(Project, id=project_id)
+    try:
+        return 200, deviations.resolve_deviation(
+            project, deviation_id, action=payload.action, note=payload.note
+        )
+    except deviations.DeviationError as exc:
+        return 400, {"error": str(exc)}
+
+
+@api.get(
+    "/projects/{int:project_id}/design-values",
+    response=dict,
+    summary="The design as a flat address/value list, for diffing against a build",
+)
+def get_design_values(request, project_id: int):
+    """The same design as the blueprint, flattened to one row per value. The nested document
+    is built for comprehension and is the wrong shape for a mechanical comparison — this is
+    what a reconcile pass walks to find mismatches worth reporting."""
+    project = get_object_or_404(Project, id=project_id)
+    return deviations.design_values(project)
+
+
+@api.get(
+    "/assets/{kind}/{int:object_id}",
+    response={200: None, 404: Error, 503: Error},
+    summary="Download an uploaded asset (durable — safe for a build to reference)",
+)
+def get_asset(request, kind: str, object_id: int):
+    """Serve an uploaded image by the *design object* that owns it.
+
+    Deliberately not a presigned S3 link. Those expire in an hour, which is fine for a page
+    render and useless to an agent whose build outlives the link — the engine conventions
+    tell builders to ignore `image_url` for exactly that reason. This path stays valid as
+    long as the object does, and because it names the object rather than a storage key,
+    re-uploading art doesn't invalidate anything already pointing here.
+    """
+    entry = assets.ASSET_KINDS.get(kind)
+    if entry is None:
+        return 404, {"error": f"kind must be one of {sorted(assets.ASSET_KINDS)}"}
+    model, key_field, _ = entry
+    obj = get_object_or_404(model, id=object_id)
+    key = getattr(obj, key_field, "")
+    if not key:
+        return 404, {"error": f"{kind} {object_id} has no uploaded asset."}
+    try:
+        data, content_type = storage.download(key)
+    except storage.StorageNotConfigured as exc:
+        return 503, {"error": str(exc)}
+    except storage.StorageError as exc:
+        return 404, {"error": f"Asset could not be read: {exc}"}
+    response = HttpResponse(data, content_type=content_type)
+    response["Cache-Control"] = "private, max-age=300"
+    return response
+
+
+@api.post(
+    "/assets/{kind}/{int:object_id}",
+    response={200: dict, 400: Error, 404: Error, 503: Error},
+    summary="Upload art for any design object",
+)
+def upload_asset(request, kind: str, object_id: int, file: UploadedFile = File(...)):
+    """Attach an uploaded image to any addressable design object.
+
+    One route for every kind (entity, character, location, level, ability, project) rather
+    than a per-model endpoint each — the older `/characters/{id}/image`-style routes still
+    exist because the UI calls them, but nothing new needs its own copy. Upload is the
+    first-class way art gets into the platform; generation is a separate, optional path.
+    """
+    entry = assets.ASSET_KINDS.get(kind)
+    if entry is None:
+        return 404, {"error": f"kind must be one of {sorted(assets.ASSET_KINDS)}"}
+    model, key_field, _ = entry
+    obj = get_object_or_404(model, id=object_id)
+    content_type = file.content_type or ""
+    if not content_type.startswith("image/"):
+        return 400, {"error": "File must be an image."}
+    try:
+        _url, key = storage.upload_image(
+            file.read(), content_type, key_prefix=assets.key_prefix(kind, obj)
+        )
+    except storage.StorageNotConfigured as exc:
+        return 503, {"error": str(exc)}
+    except storage.StorageError as exc:
+        return 400, {"error": f"Upload failed: {exc}"}
+    setattr(obj, key_field, key)
+    obj.save(update_fields=[key_field])
+    return 200, {
+        "kind": kind,
+        "id": obj.id,
+        "name": getattr(obj, "name", ""),
+        "url": assets.asset_url(kind, obj.id),
+        "image_url": storage.view_url(key),
+    }
+
+
+@api.get(
+    "/projects/{int:project_id}/assets",
+    response=dict,
+    summary="Every uploaded asset in a project, with durable URLs",
+)
+def list_project_assets(request, project_id: int):
+    """What art actually exists for this project, and how to use it. Objects with no upload
+    simply don't appear — greybox those. `sprite` sizes art in grid cells rather than pixels,
+    so it stays tied to the design's unit."""
+    project = get_object_or_404(Project, id=project_id)
+    return assets.list_assets(project)
+
+
+# --- Tile types (the terrain palette) ---------------------------------------------------------
+# The bounded half of a tile's meaning. Anything outside this vocabulary belongs in
+# `description`, in the creator's own words — that split is what lets a creator invent terrain
+# the platform never anticipated without the vocabulary growing forever.
+TILE_BEHAVIOR_KEYS = {
+    "friction",     # "normal" | "slippery" | "sticky"
+    "harmful",      # bool — touching it damages the player (lava, spikes)
+    "damage",       # number — how much, when harmful
+    "bounce",       # number — launch strength; 0 = none (springs)
+    "climbable",    # bool — ladders, vines
+    "swimmable",    # bool — water: gravity and movement change inside it
+    "conveyor",     # number — cells/sec push along x; negative = leftward
+    "breakable",    # bool — can be destroyed (from below, or by an ability)
+    "checkpoint",   # bool — passing it sets the respawn point
+}
+TILE_FRICTIONS = {"normal", "slippery", "sticky"}
+TILE_COLLISIONS = {choice for choice, _ in TileType.COLLISION_CHOICES}
+
+
+class TileTypeOut(Schema):
+    """A kind of terrain in a project's palette."""
+
+    id: int
+    project_id: int
+    name: str
+    glyph: str
+    collision: str = "solid"
+    behavior: dict[str, Any] = {}
+    description: str = ""
+    color: str = ""
+    order: int
+
+
+class TileTypeCreateIn(Schema):
+    project_id: int
+    name: str
+    glyph: str
+    collision: str = "solid"
+    behavior: dict[str, Any] | None = None
+    description: str = ""
+    color: str = ""
+    order: int | None = None
+
+
+class TileTypeUpdateIn(Schema):
+    """Partial update — omitted fields are left unchanged."""
+
+    name: str | None = None
+    glyph: str | None = None
+    collision: str | None = None
+    behavior: dict[str, Any] | None = None
+    description: str | None = None
+    color: str | None = None
+    order: int | None = None
+
+
+def _validate_tile_fields(
+    project_id: int,
+    glyph: str | None,
+    collision: str | None,
+    behavior: dict | None,
+    name: str | None = None,
+    *,
+    exclude_pk: int | None = None,
+) -> str | None:
+    """Glyphs are checked against built-ins, entity glyphs AND other tile glyphs, because all
+    three share one `Level.layout` grid — a collision there would make a painted level
+    ambiguous rather than merely untidy."""
+    if glyph is not None:
+        if len(glyph) != 1 or glyph.isspace():
+            return "glyph must be a single non-space character"
+        if glyph in blueprint.BUILTIN_TILES:
+            return f"glyph '{glyph}' is reserved (built-in tile)"
+        if EntityType.objects.filter(project_id=project_id, glyph=glyph).exists():
+            return f"glyph '{glyph}' is already used by an entity in this project"
+        qs = TileType.objects.filter(project_id=project_id, glyph=glyph)
+        if exclude_pk is not None:
+            qs = qs.exclude(pk=exclude_pk)
+        if qs.exists():
+            return f"glyph '{glyph}' is already used by another tile in this project"
+    if name is not None:
+        qs = TileType.objects.filter(project_id=project_id, name=name)
+        if exclude_pk is not None:
+            qs = qs.exclude(pk=exclude_pk)
+        if qs.exists():
+            return f"a tile named '{name}' already exists in this project"
+    if collision is not None and collision not in TILE_COLLISIONS:
+        return f"collision must be one of {sorted(TILE_COLLISIONS)}"
+    if behavior is not None:
+        unknown = set(behavior) - TILE_BEHAVIOR_KEYS
+        if unknown:
+            return (
+                f"unknown behavior keys: {' '.join(sorted(unknown))}. Known keys are "
+                f"{' '.join(sorted(TILE_BEHAVIOR_KEYS))} — put anything else in `description`, "
+                "which the building agent reads."
+            )
+        friction = behavior.get("friction")
+        if friction is not None and friction not in TILE_FRICTIONS:
+            return f"friction must be one of {sorted(TILE_FRICTIONS)}"
+    return None
+
+
+@api.get("/tiles", response=list[TileTypeOut], summary="List tile types")
+def list_tile_types(request, project_id: int | None = None):
+    """A project's terrain palette — what can be painted besides the built-in tiles."""
+    qs = TileType.objects.all()
+    if project_id is not None:
+        qs = qs.filter(project_id=project_id)
+    return list(qs)
+
+
+@api.post("/tiles", response={201: TileTypeOut, 400: Error}, summary="Create a tile type")
+def create_tile_type(request, payload: TileTypeCreateIn):
+    """Add terrain to the palette. `behavior` is a bounded vocabulary; whatever it can't
+    express goes in `description` for the building agent to read."""
+    error = _validate_tile_fields(
+        payload.project_id, payload.glyph, payload.collision, payload.behavior, payload.name
+    )
+    if error:
+        return 400, {"error": error}
+    if payload.order is not None:
+        order = payload.order
+    else:
+        last = TileType.objects.filter(project_id=payload.project_id).order_by("-order").first()
+        order = (last.order + 1) if last else 0
+    tile = TileType.objects.create(
+        project_id=payload.project_id,
+        name=payload.name,
+        glyph=payload.glyph,
+        collision=payload.collision,
+        behavior=payload.behavior or {},
+        description=payload.description,
+        color=payload.color,
+        order=order,
+    )
+    return 201, tile
+
+
+@api.patch(
+    "/tiles/{int:tile_id}", response={200: TileTypeOut, 400: Error}, summary="Update a tile type"
+)
+def update_tile_type(request, tile_id: int, payload: TileTypeUpdateIn):
+    """Partial update. `behavior` replaces the whole dict, so read it first and merge."""
+    tile = get_object_or_404(TileType, id=tile_id)
+    data = payload.model_dump(exclude_unset=True)
+    error = _validate_tile_fields(
+        tile.project_id,
+        data.get("glyph"),
+        data.get("collision"),
+        data.get("behavior"),
+        data.get("name"),
+        exclude_pk=tile.pk,
+    )
+    if error:
+        return 400, {"error": error}
+    for field in ("name", "glyph", "collision", "behavior", "description", "color", "order"):
+        if field in data and data[field] is not None:
+            setattr(tile, field, data[field])
+    tile.save()
+    return 200, tile
+
+
+@api.delete("/tiles/{int:tile_id}", response={204: None, 409: Error}, summary="Delete a tile type")
+def delete_tile_type(request, tile_id: int):
+    """Refuses while any level still paints this glyph — deleting it would leave those levels
+    holding a character nothing can resolve, which is exactly the ambiguity the glyph
+    namespace exists to prevent."""
+    tile = get_object_or_404(TileType, id=tile_id)
+    used_in = [
+        level.name
+        for level in Level.objects.filter(project_id=tile.project_id)
+        if any(tile.glyph in row for row in ((level.layout or {}).get("rows") or []))
+    ]
+    if used_in:
+        return 409, {
+            "error": (
+                f"'{tile.name}' is still painted in: {', '.join(used_in)}. "
+                "Paint over it there first."
+            )
+        }
+    tile.delete()
+    return 204, None
+
+
+# The "typical game ideas" starter set — the terrain vocabulary most 2D games assume exists.
+# Seeded rather than hardcoded so every one of them stays editable: a creator can retune ice,
+# rename it, or delete it, which a built-in glyph would never allow.
+STARTER_TILES = [
+    {"name": "Ice", "glyph": "i", "collision": "solid", "color": "#7fd4f0",
+     "behavior": {"friction": "slippery"},
+     "description": "Slippery ground. The player keeps sliding after they stop steering, and "
+                    "accelerates and turns more slowly while on it."},
+    {"name": "Lava", "glyph": "L", "collision": "none", "color": "#f0603c",
+     "behavior": {"harmful": True, "damage": 100},
+     "description": "Instantly fatal on contact. Not solid — the player falls into it."},
+    {"name": "Spring", "glyph": "s", "collision": "solid", "color": "#ffd23f",
+     "behavior": {"bounce": 3},
+     "description": "Launches the player upward on landing, about three cells high — higher "
+                    "than a normal jump, and it fires whether or not the jump key is held."},
+    {"name": "Ladder", "glyph": "H", "collision": "none", "color": "#c08a4a",
+     "behavior": {"climbable": True},
+     "description": "Climbable. While overlapping it the player ignores gravity and moves up "
+                    "and down at walking speed."},
+    {"name": "Water", "glyph": "~", "collision": "none", "color": "#4a8fd4",
+     "behavior": {"swimmable": True},
+     "description": "Swimmable. Gravity is much weaker inside, movement is slower, and jumping "
+                    "becomes a gentle upward stroke."},
+    {"name": "Checkpoint", "glyph": "C", "collision": "none", "color": "#30a46c",
+     "behavior": {"checkpoint": True},
+     "description": "Passing this sets the player's respawn point for the rest of the level."},
+]
+
+
+@api.post(
+    "/projects/{int:project_id}/seed-tiles",
+    response={200: list[TileTypeOut], 400: Error},
+    summary="Add the standard terrain starter set",
+)
+def seed_tile_types(request, project_id: int):
+    """Ice, lava, spring, ladder, water and a checkpoint — the terrain vocabulary most 2D
+    games assume. Idempotent: tiles whose name or glyph is already taken are skipped, so this
+    is safe to call on a project that has already been customised. They are ordinary rows once
+    created, so any of them can be retuned, renamed or deleted."""
+    project = get_object_or_404(Project, id=project_id)
+    for spec in STARTER_TILES:
+        if _validate_tile_fields(
+            project.id, spec["glyph"], spec["collision"], spec["behavior"], spec["name"]
+        ):
+            continue  # name or glyph already taken — leave what the creator has
+        last = TileType.objects.filter(project=project).order_by("-order").first()
+        TileType.objects.create(
+            project=project, order=(last.order + 1) if last else 0, **spec
+        )
+    return 200, list(TileType.objects.filter(project=project))
+
+
 # --- Abilities (the player's verb set) --------------------------------------------------------
 @api.get("/abilities", response=list[AbilityOut], summary="List abilities")
 def list_abilities(request, project_id: int | None = None):
@@ -1040,7 +1491,8 @@ def get_level(request, level_id: int):
 
 def _validate_layout(layout: dict, project_id: int | None) -> str | None:
     """Check a Level.layout dict; returns an error message or None. Every row must match
-    `width`, and every glyph must be a built-in tile or one of the project's entity glyphs."""
+    `width`, and every glyph must be a built-in tile, one of the project's entity glyphs, or
+    one of its tile-type glyphs — all three share this one grid."""
     rows = layout.get("rows")
     width, height = layout.get("width"), layout.get("height")
     if not isinstance(rows, list) or not all(isinstance(r, str) for r in rows):
@@ -1054,9 +1506,15 @@ def _validate_layout(layout: dict, project_id: int | None) -> str | None:
         known |= set(
             EntityType.objects.filter(project_id=project_id).values_list("glyph", flat=True)
         )
+        known |= set(
+            TileType.objects.filter(project_id=project_id).values_list("glyph", flat=True)
+        )
     unknown = {ch for row in rows for ch in row} - known
     if unknown:
-        return f"Unknown glyphs in layout: {' '.join(sorted(unknown))} — add matching entity types first"
+        return (
+            f"Unknown glyphs in layout: {' '.join(sorted(unknown))} — add a matching entity "
+            "or tile type first"
+        )
     return None
 
 
@@ -1177,6 +1635,43 @@ def update_scene(request, scene_id: int, payload: SceneUpdateIn):
 # --- Locations (places within a level) --------------------------------------------------------
 LOCATION_KINDS = {choice for choice, _ in Location.KIND_CHOICES} | {""}
 LOCATION_SCALES = {choice for choice, _ in Location.SCALE_CHOICES} | {""}
+LOCATION_EXTENTS = {choice for choice, _ in Location.EXTENT_CHOICES} | {""}
+
+
+def _clean_region(region: Any, level: Level, extent: str) -> tuple[dict[str, int] | None, str]:
+    """Validate a location's grid rectangle. Returns (region, error) — one of them is falsy.
+
+    Checked against the level's own layout, so a region can never name cells the grid doesn't
+    have. A level with no layout drawn yet accepts any in-range rectangle: the creator may
+    place a location before painting, and rejecting that would force an arbitrary order on
+    two tasks that don't depend on each other.
+    """
+    if extent == Location.EXTENT_LEVEL:
+        return None, ""  # the whole grid — a rectangle would only be able to contradict it
+    if region is None:
+        return None, ""
+    try:
+        x, y = int(region["x"]), int(region["y"])
+        width = int(region.get("width", 1))
+        height = int(region.get("height", 1))
+    except (KeyError, TypeError, ValueError):
+        return None, 'region must be {"x": int, "y": int, "width": int, "height": int}'
+    if extent == Location.EXTENT_POINT:
+        width = height = 1  # a spot is one cell, whatever was sent
+    if width < 1 or height < 1:
+        return None, "region width and height must be at least 1"
+    if x < 0 or y < 0:
+        return None, "region x and y must be 0 or greater"
+    layout = level.layout or {}
+    rows = layout.get("rows") if isinstance(layout, dict) else None
+    if rows:
+        grid_w, grid_h = len(rows[0]), len(rows)
+        if x + width > grid_w or y + height > grid_h:
+            return None, (
+                f"region ({x},{y}) {width}x{height} doesn't fit the level's "
+                f"{grid_w}x{grid_h} grid"
+            )
+    return {"x": x, "y": y, "width": width, "height": height}, ""
 
 
 def _location(location_id: int) -> Location:
@@ -1231,6 +1726,8 @@ def _location_out(location: Location) -> dict:
         "props": location.props or [],
         "image_url": storage.view_url(location.image_key),
         "image_key": location.image_key,
+        "extent": location.extent,
+        "region": location.region,
         "characters": list(location.characters.all()),
         "connections": _connections_for(location),
     }
@@ -1270,6 +1767,15 @@ def create_location(request, payload: LocationCreateIn):
         return 400, {"error": f"kind must be one of {sorted(LOCATION_KINDS - {''})} or blank"}
     if scale not in LOCATION_SCALES:
         return 400, {"error": f"scale must be one of {sorted(LOCATION_SCALES - {''})} or blank"}
+    extent = payload.extent or ""
+    if extent not in LOCATION_EXTENTS:
+        return 400, {"error": f"extent must be one of {sorted(LOCATION_EXTENTS - {''})} or blank"}
+    level = Level.objects.filter(id=payload.level_id).first()
+    if level is None:
+        return 400, {"error": "level_id must name an existing level"}
+    region, region_error = _clean_region(payload.region, level, extent)
+    if region_error:
+        return 400, {"error": region_error}
     if payload.order is not None:
         order = payload.order
     else:
@@ -1284,6 +1790,8 @@ def create_location(request, payload: LocationCreateIn):
         scale=scale,
         mood=payload.mood or "",
         props=payload.props or [],
+        extent=extent,
+        region=region,
     )
     return 201, _location_detail(location.id)
 
@@ -1299,7 +1807,9 @@ def get_location(request, location_id: int):
     summary="Update a location",
 )
 def update_location(request, location_id: int, payload: LocationUpdateIn):
-    """Partial update: name/description/order plus the detail fields (kind, scale, mood, props)."""
+    """Partial update: name/description/order, the detail fields (kind, scale, mood, props),
+    and the spatial binding (extent, region). A region is validated against the level's own
+    layout, so it can never name cells the grid doesn't have."""
     location = get_object_or_404(Location, id=location_id)
     data = payload.model_dump(exclude_unset=True)
     if "name" in data and data["name"]:
@@ -1320,6 +1830,21 @@ def update_location(request, location_id: int, payload: LocationUpdateIn):
         location.mood = data["mood"]
     if "props" in data and data["props"] is not None:
         location.props = data["props"]
+    if "extent" in data and data["extent"] is not None:
+        if data["extent"] not in LOCATION_EXTENTS:
+            return 400, {
+                "error": f"extent must be one of {sorted(LOCATION_EXTENTS - {''})} or blank"
+            }
+        location.extent = data["extent"]
+    # Re-validate against whichever extent is in force after this call, so changing extent and
+    # region in one PATCH can't slip a rectangle past the rule for the extent it lands on.
+    if "region" in data:
+        region, region_error = _clean_region(data["region"], location.level, location.extent)
+        if region_error:
+            return 400, {"error": region_error}
+        location.region = region
+    elif location.extent == Location.EXTENT_LEVEL:
+        location.region = None  # switching to whole-level drops a rectangle it would contradict
     location.save()
     return 200, _location_detail(location.id)
 

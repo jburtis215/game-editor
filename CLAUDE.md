@@ -69,7 +69,21 @@ module declarations for CSS/asset imports — keep it.
   `/projects/:projectId/levels/:levelId/layout` = `LevelLayoutPage` (paint-editor for the level's
   ASCII tile grid — palette of built-in tiles `. # = P G` + entity glyphs, drag-paint,
   width/height resize, debounced PATCH of `Level.layout`, and the level's **intro dialogue
-  scene** picker). The Systems tab's Blueprint aside has an **Export** button downloading the
+  scene** picker). A **Tiles ⇄ Locations** mode toggle switches the grid from painting to
+  **placing locations**: pick a place, drag a box, and it PATCHes that location's
+  `extent`/`region` — a 1×1 drag becomes a `point`, anything larger an `area`. Placed
+  locations render as translucent hue-coded overlays (`pointer-events: none`, so the cells
+  underneath still take the drag) and are allowed to overlap and nest. The palette has a **Terrain** section
+  (the project's tile types, painted like entities, each in its own greybox colour) with a
+  one-click link to seed the standard set. Selecting an entity in the
+  palette reveals a **sprite scale slider** that resizes every instance of it on the grid live
+  (debounced PATCH of `sprite.scale`); entity cells render the art when there is any and the
+  scaled colour block when there isn't, so the control is useful before any upload exists.
+  A **"Footprint follows size"** checkbox (on by default) keeps `cells_wide`/`cells_high`
+  tracking `scale` — unlink it for a big sprite with a forgiving hitbox and two more sliders
+  appear, with the collision box drawn as a dashed outline on the grid. The link is enforced
+  in `normalize_sprite`, not trusted from the client, so a footprint can never drift from the
+  scale it claims to follow. The Systems tab's Blueprint aside has an **Export** button downloading the
   full `gameblueprint` JSON from `/api/projects/{id}/export`.
 - **Characters** (`pages/CharactersPage.tsx` + `CharacterDetailPage.tsx`): the list is a card grid
   (`Characters.css`) scoped via `GET /api/characters?project_id=`; "＋ New character" POSTs then
@@ -95,7 +109,9 @@ module declarations for CSS/asset imports — keep it.
   places, listed via `GET /api/locations?level_id=` — the page owns the data (load/create/delete +
   scenes), each `LocationCard` owns one place. A card carries: a **reference image** (upload or
   ✨ generate — same S3/FLUX pipeline as character portraits), the **detail fields** `kind`/`scale`
-  (selects) · `mood` (text) · `props` (chip list), debounced ~400ms like the Settings tab;
+  (selects) · `mood` (text) · `props` (chip list) · **`extent`** ("Where it is" — whole level /
+  an area / a single spot, with a read-only readout of the region and a link to the layout
+  editor), debounced ~400ms like the Settings tab;
   assign/unassign project characters as "present here" (`POST`/`DELETE
   …/locations/{id}/characters[/{character_id}]` — a manually-curated M2M, unlike a level's
   *dialogue* cast on `LevelCharactersPage`, which is deduced); a **"Connects to…"** row (the world
@@ -114,8 +130,13 @@ module declarations for CSS/asset imports — keep it.
   `PATCH /api/projects/{id}`; the Systems/Preview tabs keep a local working copy and **debounce**
   saves (~400ms) so dragging/sliding doesn't flood the API.
 - **Game-system definitions** live in `src/lib/gameSystems.ts` (ported from the Lovable
-  prototype): `DIMENSIONS`, `GENRES`, `SYSTEMS` (each with `single|multi|slider` questions),
-  `genreDefaults()`, `buildManifest()`, plus `normalizeSystems()`/`normalizeHudLayout()` that
+  prototype): `DIMENSIONS`, `GENRES`, `SYSTEMS` (each with `single|multi|slider` questions —
+  now nine, including **`progression` ("Failure & Progress")**: what happens on death, what a
+  fall out of bounds does, and whether tries are limited. Added as pure questionnaire work
+  with **zero new backend machinery**, the same way `controls` was — the export, HUD and
+  blueprint pick it up automatically),
+  `genreDefaults()` (plus `PROGRESSION_DEFAULTS`, since how a game treats death is a genre
+  signature), `buildManifest()`, plus `normalizeSystems()`/`normalizeHudLayout()` that
   coerce the project's JSON fields into well-formed typed state. **This module is the source of
   truth for the question set** — the DB only stores the *answers*. Edit questions here, not in the
   DB.
@@ -228,11 +249,57 @@ module declarations for CSS/asset imports — keep it.
     bump the format version on breaking changes. `GET /api/levels/{id}/characters` returns the level's
     cast **deduced from dialogue speakers** (`Dialogue.character` where `scene.level == level`),
     each with the lines they speak — powers `LevelCharactersPage`.
+  - **Tile types** (the terrain palette — the deliberate mirror of entity types):
+    `GET /api/tiles?project_id=`, `POST /api/tiles`, `PATCH`/`DELETE /api/tiles/{id}`, and
+    `POST /api/projects/{id}/seed-tiles` (idempotent starter set: ice · lava · spring · ladder ·
+    water · checkpoint). Entities are the *actors* on the grid, tiles are the *terrain*; both
+    share one glyph namespace with the built-ins, so glyph validation runs across all three in
+    both directions and `_validate_layout` accepts either. Delete 409s while a level still
+    paints the glyph. `collision` (`solid`|`none`|`one_way`) and `behavior` are a **bounded**
+    vocabulary (unknown keys are a 400 that points the caller at `description`); `description`
+    is the **escape hatch** that makes custom terrain work — "walking through this flips
+    gravity" is prose the building agent reads, exactly as `EntityType.description` already
+    carries nuance past `behavior`. `color` is the greybox colour, so editor and build agree
+    before any art exists.
+  - **Assets** (uploaded art, and how a builder gets it): `GET /api/projects/{id}/assets`
+    lists every uploaded image in the project with a **durable** URL and its sprite geometry;
+    `GET /api/assets/{kind}/{object_id}` (`kind` = entity|character|location) streams the bytes
+    from S3. Durable on purpose — `image_url` everywhere else is a **presigned URL that expires
+    in an hour**, which is fine for the editor UI and useless to an agent whose build outlives
+    the link (the Godot conventions used to just tell builders to ignore art for that reason).
+    The route names the *design object*, not the storage key, so re-uploading art doesn't
+    invalidate anything pointing at it. `EntityType.sprite` / `Character.sprite` carry
+    `{cells_wide, cells_high, frames, fps, scale}` — sized in **grid cells, not pixels**, so art
+    stays tied to the design's unit and survives a change of pixels-per-cell. `scale` is a
+    separate **visual** multiplier (draw at footprint × scale; collision stays on the unscaled
+    footprint), set by eye with a slider in the layout editor because "does this read too big?"
+    is only answerable against the level it sits in. Normalized by
+    `api/services/assets.py` (`normalize_sprite`), like `characterTraits.ts` does for traits.
+    **Image generation is deliberately not part of this path** — upload is the first-class way
+    art gets in, and greyboxing stays the builder's first pass either way.
+    `POST /api/assets/{kind}/{object_id}` is the generic upload (one route for all six kinds:
+    entity · character · location · level · ability · project — every addressable object now
+    has an `image_key`). The older per-model `/characters/{id}/image` routes still exist because
+    the UI calls them; nothing new needs its own copy.
+  - **Deviations** (the return half of the build loop): `POST /api/projects/{id}/deviations`
+    (`address`/`build_value`/`engine`/`engine_path`/`note`), `GET /api/projects/{id}/deviations`
+    (optional `?status=`/`?engine=`), `POST /api/projects/{id}/deviations/{devid}/resolve`
+    (`action` = `accept`|`reject`), and `GET /api/projects/{id}/design-values` (the design
+    flattened to one `{address, value, writable}` row per value — the shape a mechanical
+    diff walks, which the nested blueprint deliberately isn't). Built by
+    `api/services/deviations.py`; see the `Deviation` model note below for the two-kinds
+    policy. **There is no `design_value` input on purpose** — the platform reads what the
+    design says itself, so a reporter can't misquote a contradiction into a silent edit.
   - **Locations** (per-level): `GET /api/locations` (optional `?level_id=` filter), `POST
     /api/locations` (create; auto-appends `order`, takes `level_id`), `GET`/`PATCH`/`DELETE
     /api/locations/{id}` — a place within a level (`name`/`description`/`order` plus the detail
     fields `kind`/`scale`/`mood`/`props`; `kind`/`scale` are the only validated ones — a bad value
-    is a 400, everything else is stored verbatim). `POST
+    is a 400, everything else is stored verbatim). **Spatial binding**: `extent`
+    (`level`|`area`|`point`|`""`) plus `region` `{x,y,width,height}` in grid cells, validated
+    against the level's own layout (400 if it doesn't fit); `extent: "level"` clears `region`
+    and the export resolves it to the whole grid, so every placed location reads the same way.
+    `scale` is how big the place *feels* (writer's language); `extent` is how much space it
+    *occupies* — deliberately separate axes. `POST
     /api/locations/{id}/characters` (`character_id`; validates same-project) and `DELETE
     /api/locations/{id}/characters/{character_id}` manage the location's manually-assigned
     `characters` M2M ("who's present here" — distinct from a level's dialogue-deduced cast).
@@ -336,7 +403,8 @@ module declarations for CSS/asset imports — keep it.
   (directed labeled edge `from_character → to_character` with a `uniq_char_relationship` unique
   constraint; a character's outgoing links are `relationships_out`), `Location` (a place within a
   level — `name`/`description`/`order`, the detail fields `kind`/`scale`/`mood`/`props` (JSONB list
-  of strings) + `image_key`, and a manually-curated `characters` M2M of who's present, distinct
+  of strings) + `image_key` + the spatial binding `extent`/`region` (which cells on the level's
+  grid this place occupies — see the API bullet above), and a manually-curated `characters` M2M of who's present, distinct
   from a scene's cast), `LocationConnection` (the room-and-exit graph — a directed
   `from_location → to_location` edge with a `label`, a `bidirectional` flag defaulting True, a
   `uniq_location_connection` unique constraint on the ordered pair, and `requirements` JSONB using
@@ -346,7 +414,16 @@ module declarations for CSS/asset imports — keep it.
   same bounded vocabulary — empty = available from the start — and `order`), and
   `DesignAddress` (the readable-name index — `project`/`object_type`/`object_id`/`slug`/
   `is_current`, with a partial unique constraint so only one live object holds a name and
-  retired rows keep the rename trail), and
+  retired rows keep the rename trail), `TileType` (a project-scoped kind of terrain — name/glyph/`collision`/`behavior`
+  JSONB/`description`/`color`/order, unique (project, glyph) and (project, name); the mirror of
+  `EntityType`, sharing its grid and its bounded-dict-plus-free-prose split), `Deviation` (one
+  value where the build and the design
+  disagree, addressed down to the **field** — `system:movement.gravity`. Two kinds, handled
+  differently: a `conflict` (design specifies a value, build differs) is held **pending** for
+  the creator, since the design is canonical; a `gap` (design said nothing, the agent had to
+  decide) is written into the design and flagged as build-originated — nothing is overwritten
+  and the design gets more complete. Only the *knob bags* are writable — a system's `values`,
+  an ability's `params`, an entity's `behavior`; authored prose and structure never are), and
   `Dialogue` — a node in a branching dialogue
   **graph** (`scene` FK, `character` FK, `text`, plus `requirements`/`effects` JSONB lists of typed
   dicts — `has_item`/`stat_check`/`state_equals`/`remembered_choice` and `give_item`/`remove_item`/
@@ -393,10 +470,12 @@ running. `server.py` holds a `FastMCP` instance with **two surfaces**. **Authori
 read/create/update tools mirroring the hierarchy: projects · abilities · levels · locations ·
 scenes · characters · character traits · story state · dialogue, incl.
 `import_scene_yarn`/`export_scene_yarn`, plus the world layer
-`connect_locations`/`update_location`/`generate_location_art` and the action layer
+`connect_locations`/`update_location`/`place_location` (binds a place to cells on the level
+grid)/`generate_location_art` and the action layer
 `list_abilities`/`create_ability`/`update_ability`) — driven by the `build-game` prompt.
 Authoring gained `set_level_layout` (paints `Level.layout`; the API validates row
-lengths and rejects glyphs with no matching entity type) and
+lengths and rejects glyphs with no matching entity or tile type),
+`list_tile_types`/`create_tile_type`/`update_tile_type`/`seed_tile_palette` (terrain), and
 `create_entity_type`/`update_entity_type`/`seed_entity_palette`, without which an agent
 could create a level but never make it playable.
 **Reading the design** — `get_manifest` (the index, and the intended first read),
@@ -411,7 +490,13 @@ The conventions are prescriptive only where reconciliation needs them: a layout 
 indistinguishable from "not found".
 **Reporting the build back** — `report_built` (call per object, passing the design hash it
 was built from) and `get_build_status` (resume a session; see what went stale or got
-renamed). The read tools all wrap `GET /api/projects/{id}/export` and slice it rather than
+renamed), plus `list_assets` (the creator's uploaded art with durable URLs and cell-sized sprite
+geometry — called once the greybox works, never as a gate on it), and
+`report_deviation` / `list_deviations` / `get_design_values` for the values
+themselves: an agent reports each value it had to invent or contradict, one field address at
+a time, and the `kickoff` prompt now routes gaps through it rather than telling the agent to
+list them at the end (which is what produced a wall of `GAP_*` constants in the Godot demo,
+visible only to whoever read the generated code). The read tools all wrap `GET /api/projects/{id}/export` and slice it rather than
 re-deriving anything, so no two can disagree; they refetch per call (no caching) so an agent
 never builds from a design the creator has since changed. Four resources
 (`game-editor://projects`, `…/projects/{id}` = a blueprint-derived overview,

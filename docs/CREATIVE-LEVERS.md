@@ -13,12 +13,10 @@ discipline given a structured, agent-readable form. The platform is, in effect, 
 machine-consumable. Section headers name the tradition each lever comes from.*
 
 *Ranked by creative-control-per-effort. Everything here depends on VISION Phase 1 (the
-blueprint export) to reach the agent — **the export and the MCP read layer both shipped
-in Aug 2026**, and every "Export:" line below is done except the parts that need
-`build_plan`. Each section notes what it reuses from existing machinery — most of these
-are new attachment points for patterns that already exist (`DialogueEdge`, the
-questionnaire format, the S3 image pipeline, the bounded requirements/effects
-vocabulary).*
+blueprint export) to reach the agent; each section notes what it reuses from existing
+machinery — most of these are new attachment points for patterns that already exist
+(`DialogueEdge`, the questionnaire format, the S3 image pipeline, the bounded
+requirements/effects vocabulary).*
 
 ---
 
@@ -51,10 +49,9 @@ gating, and pacing all become plannable, and the build plan can walk it — the
 - [x] MCP: `connect_locations` tool (+ include connections in `list_locations`).
 - [x] UI: on each `LocationsPage` card, a "Connects to…" row — picker of the level's
       other locations + optional requirement via the existing `MemoryComboBox`.
-- [x] Export: `levels[].locations[].connections` — shipped Aug 2026, serialized
-      relative to each location (`direction: out|in`), so a two-way exit shows on both
-      ends. *(The `build_plan` half — BFS from the unlocked subgraph so gated areas
-      build after their keys exist — is still pending; VISION Phase 1.)*
+- [ ] Export: `levels[].locations[].connections`; `build_plan` orders locations by a
+      BFS from the unlocked subgraph so gated areas build after their keys exist.
+      *(deferred — no export layer yet)*
 
 ### 1b. Location detail fields
 
@@ -67,8 +64,7 @@ gating, and pacing all become plannable, and the build plan can walk it — the
       `create_location`/`list_locations` tools — no new endpoints.
 - [x] UI: fields on the `LocationsPage` card (kind/scale as small selects, mood as a
       one-line input, props as a chip list). Debounce saves ~400ms like Settings.
-- [x] Export: all four fields on each location object. *(shipped Aug 2026 —
-      `levels[].locations[]`.)*
+- [ ] Export: all four fields on each location object. *(deferred — no export layer yet)*
 
 ### 1c. Location reference imagery (generalize the portrait pipeline)
 
@@ -82,6 +78,29 @@ gating, and pacing all become plannable, and the build plan can walk it — the
 - [x] UI: image slot on the location card — this is the "best available
       representation" slot from VISION §3, ready for a build screenshot to replace it
       later.
+
+### 1d. Locations bound to actual space (Aug 2026)
+
+*The first Godot build reported every location as "transcribed as data — no cells represent
+it, so it has no playable space". Mood, props, reference art and locked exits all described
+somewhere the game could not point at: the whole world layer failed this doc's own test that
+a lever must move the output.*
+
+- [x] `Location.extent` (`level` | `area` | `point` | `""`) + `region`
+      `{x,y,width,height}` in grid cells. `extent` is how much space a place *occupies*;
+      the existing `scale` stays how big it *feels* — a "vast" hall can occupy one small
+      area, so they're separate axes rather than one confused field.
+- [x] API: `extent`/`region` on the existing location create/PATCH, validated against the
+      level's own layout (400 when the rectangle doesn't fit). No new endpoints.
+- [x] MCP: `place_location`. Export: `extent` + `region` on each location, with
+      `extent: "level"` resolved to the whole grid so every placed location reads the same.
+- [x] UI: an extent select on the location card, and a **Tiles ⇄ Locations** toggle on the
+      layout editor — pick a place, drag a box. A 1×1 drag makes a `point`, larger makes an
+      `area`; boxes may overlap and nest (a well inside a hillside), which is design, not error.
+- [x] Godot conventions: a placed location builds as an `Area2D` over its region, which is
+      what finally gives dialogue, encounters and connection-gating somewhere to fire.
+- [ ] Not done: 3D and non-grid games. The binding is deliberately 2D-grid-only for now —
+      the tile grid is the only spatial model the platform has.
 - [ ] Future (note, don't build yet): the orphaned `ShapeEditorPage` is a plausible
       "block out this location" SVG floor-plan sketcher — a rough layout is a
       legitimate design artifact an agent can read.
@@ -114,8 +133,7 @@ on both.
       and (post-Phase-1) the export all pick it up automatically. Optionally a small
       sim vignette later; not required to ship. *(No sim vignette built — optional.)*
 - [ ] `build_plan`: controls/camera build as part of the project scaffold step — first,
-      before any other system. *(still deferred — the export layer shipped, but
-      `build_plan` has not; VISION Phase 1.)*
+      before any other system. *(deferred — no build_plan layer yet)*
 
 ### 2b. Abilities / verb set (new model — it's per-project data, not a questionnaire)
 
@@ -131,10 +149,10 @@ on both.
       system, or its own small section; card list with name/description/params +
       unlock picker (`MemoryComboBox` again). *(Its own section below the architect —
       the verb set is project-wide data, not one system's answers.)*
-- [x] Export: top-level `abilities` list — shipped Aug 2026. *(The `build_plan` half —
-      placing abilities right after foundation systems and ordering locked ones after the
-      state keys that gate them, the same dependency logic as
-      dialogue-after-declarations — is still pending; VISION Phase 1.)*
+- [ ] Export: top-level `abilities` list; `build_plan` places abilities right after
+      foundation systems and orders locked abilities after the state keys that gate
+      them (same dependency logic as dialogue-after-declarations).
+      *(deferred — no export layer yet)*
 - [ ] This is also what progression finally *grants*: a quest reward or effect can
       reference an ability once both exist. *(the model exists; nothing grants one until
       quests/rewards do)*
@@ -248,6 +266,18 @@ and currently control least — every screenshot an agent produces reflects *its
 - [ ] Reference images beyond portraits: covered by 1c for locations; add the same
       upload endpoint to `Level` if level-scale art direction proves wanted — wait
       for the pull.
+- [x] **Assets that actually reach the engine** (Aug 2026). Uploading art already worked;
+      *using* it never did — every `image_url` is a presigned link that expires in an hour, so
+      the conventions told builders to ignore art entirely. Now: a durable
+      `GET /api/assets/{kind}/{id}` that streams the bytes and names the design object rather
+      than the storage key, a project-wide `list_assets` MCP tool, and `sprite`
+      (`cells_wide`/`cells_high`/`frames`/`fps`) so a builder knows whether a PNG is one sprite
+      or a four-frame strip. Sized in **grid cells, not pixels**, so art stays tied to the
+      design's unit. Greyboxing stays the first pass — assets replace it, never gate it.
+- [ ] **Image generation is not on this path, on purpose.** FLUX makes illustrations;
+      sprites need transparency, a fixed palette, cell-aligned dimensions and frames. Upload
+      is the first-class route. Generation stays what it's good at — reference art for mood
+      and characters.
 - [ ] Export: project `art_direction` block + per-entity notes inline. `/kickoff`
       prompt instructs the agent: match `art_direction` before generating any asset;
       never substitute its own style where notes exist.
@@ -256,17 +286,13 @@ and currently control least — every screenshot an agent produces reflects *its
 
 ## Sequencing & dependencies
 
-1. **VISION Phase 1** — mostly shipped: `GET /api/projects/{id}/export` and the MCP read
-   tools that slice it (`get_blueprint`, `get_game_config`, `get_level_design`,
-   `list_entity_types`) both exist, so a building agent can now pull the design. Each new
-   section adds its objects to `build_blueprint()` as it ships. Still pending:
-   **`build_plan`**, which several items below wait on for ordering.
+1. **VISION Phase 1 first** — none of this reaches the agent until the export/read
+   layer exists. Each section above adds its objects to the export as it ships.
 2. Then, by value-per-effort: **1a→1b→1c (world)** and **2a (controls)** — both cheap,
    both pure reuse of existing patterns; **2b (abilities)**; **4a/4b (triggers +
    items)** as one arc since they share the extracted requirement/effect picker;
    **3 (opposition)** when a combat-forward project needs it; **5** piecemeal
    alongside whatever entity is being touched.
-   *Status: 1a, 1b, 1c, 2a and 2b shipped Aug 2026, minus their export lines.*
 3. Every new model follows the house pattern: Ninja `Schema`s in `api/api.py`,
    `npm run gen:api` after each schema change, MCP tools as thin httpx proxies with
    docstrings as the agent-facing docs, deletes validated (409 on referenced), JSONB

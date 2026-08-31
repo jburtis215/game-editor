@@ -124,6 +124,8 @@ export default function LocationsPage() {
           <LocationCard
             key={loc.id}
             location={loc}
+            projectId={projectId ?? ''}
+            levelId={levelId ?? ''}
             characters={characters}
             siblings={locations.filter((l) => l.id !== loc.id)}
             scenes={scenes.filter((s) => s.location_id === loc.id)}

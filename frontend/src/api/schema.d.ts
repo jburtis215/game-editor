@@ -385,6 +385,212 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/projects/{project_id}/deviations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Deviations between design and build, and what still needs a decision
+         * @description Every reported deviation with a rollup. `stale` marks one whose object the creator has
+         *     edited since it was filed, so the values it quotes may no longer be the ones at issue.
+         */
+        get: operations["api_api_list_deviations"];
+        put?: never;
+        /**
+         * Report one value where the build differs from the design
+         * @description The other half of build truth flowing back. A contradiction of something the design
+         *     specifies is held **pending** for the creator — the design is canonical and is never
+         *     overwritten by a build. A value the design never specified is a *gap*: there is nothing
+         *     to overwrite and no disagreement to settle, so it is written into the design and flagged
+         *     as originating in the build, which makes the design more complete instead of letting it
+         *     drift. Reporting a value the design already agrees with records nothing and says so.
+         */
+        post: operations["api_api_report_deviation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{project_id}/deviations/{deviation_id}/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Accept a deviation into the design, or reject it as rework
+         * @description Accepting writes the build's value into the design where the address is a tuned value
+         *     (a system's answers, an ability's params, an entity's behavior) and says plainly when it
+         *     can't — accepting a name or a description is a real decision that still needs a hand
+         *     edit. Rejecting leaves the design alone, which makes the object work still owed.
+         */
+        post: operations["api_api_resolve_deviation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{project_id}/design-values": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The design as a flat address/value list, for diffing against a build
+         * @description The same design as the blueprint, flattened to one row per value. The nested document
+         *     is built for comprehension and is the wrong shape for a mechanical comparison — this is
+         *     what a reconcile pass walks to find mismatches worth reporting.
+         */
+        get: operations["api_api_get_design_values"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/assets/{kind}/{object_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download an uploaded asset (durable — safe for a build to reference)
+         * @description Serve an uploaded image by the *design object* that owns it.
+         *
+         *     Deliberately not a presigned S3 link. Those expire in an hour, which is fine for a page
+         *     render and useless to an agent whose build outlives the link — the engine conventions
+         *     tell builders to ignore `image_url` for exactly that reason. This path stays valid as
+         *     long as the object does, and because it names the object rather than a storage key,
+         *     re-uploading art doesn't invalidate anything already pointing here.
+         */
+        get: operations["api_api_get_asset"];
+        put?: never;
+        /**
+         * Upload art for any design object
+         * @description Attach an uploaded image to any addressable design object.
+         *
+         *     One route for every kind (entity, character, location, level, ability, project) rather
+         *     than a per-model endpoint each — the older `/characters/{id}/image`-style routes still
+         *     exist because the UI calls them, but nothing new needs its own copy. Upload is the
+         *     first-class way art gets into the platform; generation is a separate, optional path.
+         */
+        post: operations["api_api_upload_asset"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{project_id}/assets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Every uploaded asset in a project, with durable URLs
+         * @description What art actually exists for this project, and how to use it. Objects with no upload
+         *     simply don't appear — greybox those. `sprite` sizes art in grid cells rather than pixels,
+         *     so it stays tied to the design's unit.
+         */
+        get: operations["api_api_list_project_assets"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tiles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List tile types
+         * @description A project's terrain palette — what can be painted besides the built-in tiles.
+         */
+        get: operations["api_api_list_tile_types"];
+        put?: never;
+        /**
+         * Create a tile type
+         * @description Add terrain to the palette. `behavior` is a bounded vocabulary; whatever it can't
+         *     express goes in `description` for the building agent to read.
+         */
+        post: operations["api_api_create_tile_type"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tiles/{tile_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete a tile type
+         * @description Refuses while any level still paints this glyph — deleting it would leave those levels
+         *     holding a character nothing can resolve, which is exactly the ambiguity the glyph
+         *     namespace exists to prevent.
+         */
+        delete: operations["api_api_delete_tile_type"];
+        options?: never;
+        head?: never;
+        /**
+         * Update a tile type
+         * @description Partial update. `behavior` replaces the whole dict, so read it first and merge.
+         */
+        patch: operations["api_api_update_tile_type"];
+        trace?: never;
+    };
+    "/api/projects/{project_id}/seed-tiles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Add the standard terrain starter set
+         * @description Ice, lava, spring, ladder, water and a checkpoint — the terrain vocabulary most 2D
+         *     games assume. Idempotent: tiles whose name or glyph is already taken are skipped, so this
+         *     is safe to call on a project that has already been customised. They are ordinary rows once
+         *     created, so any of them can be retuned, renamed or deleted.
+         */
+        post: operations["api_api_seed_tile_types"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/abilities": {
         parameters: {
             query?: never;
@@ -575,7 +781,9 @@ export interface paths {
         head?: never;
         /**
          * Update a location
-         * @description Partial update: name/description/order plus the detail fields (kind, scale, mood, props).
+         * @description Partial update: name/description/order, the detail fields (kind, scale, mood, props),
+         *     and the spatial binding (extent, region). A region is validated against the level's own
+         *     layout, so it can never name cells the grid doesn't have.
          */
         patch: operations["api_api_update_location"];
         trace?: never;
@@ -1007,6 +1215,18 @@ export interface components {
              * @default
              */
             image_url: string;
+            /**
+             * Sprite
+             * @default {}
+             */
+            sprite: {
+                [key: string]: unknown;
+            };
+            /**
+             * Asset Url
+             * @default
+             */
+            asset_url: string;
         };
         /** EntityTypeCreateIn */
         EntityTypeCreateIn: {
@@ -1049,6 +1269,10 @@ export interface components {
             description?: string | null;
             /** Behavior */
             behavior?: {
+                [key: string]: unknown;
+            } | null;
+            /** Sprite */
+            sprite?: {
                 [key: string]: unknown;
             } | null;
         };
@@ -1170,6 +1394,140 @@ export interface components {
              * @default
              */
             note: string;
+        };
+        /**
+         * DeviationIn
+         * @description One value where the build differs from the design, or where the design was silent.
+         *
+         *     `address` names a single value (`system:movement.gravity`), not an object — a creator
+         *     can act on one value and can't act on "the movement system differs". Note that there is
+         *     no field for what the *design* says: the platform reads that itself, so a misquote can't
+         *     turn a real contradiction into a gap that gets written straight in.
+         */
+        DeviationIn: {
+            /** Address */
+            address: string;
+            /** Build Value */
+            build_value?: unknown;
+            /**
+             * Engine
+             * @default godot
+             */
+            engine: string;
+            /**
+             * Engine Path
+             * @default
+             */
+            engine_path: string;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+        };
+        /**
+         * DeviationResolveIn
+         * @description The creator's call: `accept` adopts the build's value into the design, `reject` keeps
+         *     the design as it stands and leaves the build owing rework.
+         */
+        DeviationResolveIn: {
+            /** Action */
+            action: string;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+        };
+        /**
+         * TileTypeOut
+         * @description A kind of terrain in a project's palette.
+         */
+        TileTypeOut: {
+            /** Id */
+            id: number;
+            /** Project Id */
+            project_id: number;
+            /** Name */
+            name: string;
+            /** Glyph */
+            glyph: string;
+            /**
+             * Collision
+             * @default solid
+             */
+            collision: string;
+            /**
+             * Behavior
+             * @default {}
+             */
+            behavior: {
+                [key: string]: unknown;
+            };
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /**
+             * Color
+             * @default
+             */
+            color: string;
+            /** Order */
+            order: number;
+        };
+        /** TileTypeCreateIn */
+        TileTypeCreateIn: {
+            /** Project Id */
+            project_id: number;
+            /** Name */
+            name: string;
+            /** Glyph */
+            glyph: string;
+            /**
+             * Collision
+             * @default solid
+             */
+            collision: string;
+            /** Behavior */
+            behavior?: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /**
+             * Color
+             * @default
+             */
+            color: string;
+            /** Order */
+            order?: number | null;
+        };
+        /**
+         * TileTypeUpdateIn
+         * @description Partial update — omitted fields are left unchanged.
+         */
+        TileTypeUpdateIn: {
+            /** Name */
+            name?: string | null;
+            /** Glyph */
+            glyph?: string | null;
+            /** Collision */
+            collision?: string | null;
+            /** Behavior */
+            behavior?: {
+                [key: string]: unknown;
+            } | null;
+            /** Description */
+            description?: string | null;
+            /** Color */
+            color?: string | null;
+            /** Order */
+            order?: number | null;
         };
         /**
          * AbilityOut
@@ -1469,6 +1827,15 @@ export interface components {
              */
             image_key: string;
             /**
+             * Extent
+             * @default
+             */
+            extent: string;
+            /** Region */
+            region?: {
+                [key: string]: number;
+            } | null;
+            /**
              * Characters
              * @default []
              */
@@ -1503,6 +1870,12 @@ export interface components {
             mood?: string | null;
             /** Props */
             props?: string[] | null;
+            /** Extent */
+            extent?: string | null;
+            /** Region */
+            region?: {
+                [key: string]: number;
+            } | null;
         };
         /**
          * LocationUpdateIn
@@ -1523,6 +1896,12 @@ export interface components {
             mood?: string | null;
             /** Props */
             props?: string[] | null;
+            /** Extent */
+            extent?: string | null;
+            /** Region */
+            region?: {
+                [key: string]: number;
+            } | null;
         };
         /** LocationCharacterIn */
         LocationCharacterIn: {
@@ -2512,6 +2891,407 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+        };
+    };
+    api_api_list_deviations: {
+        parameters: {
+            query?: {
+                status?: string | null;
+                engine?: string | null;
+            };
+            header?: never;
+            path: {
+                project_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    api_api_report_deviation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeviationIn"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    api_api_resolve_deviation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: number;
+                deviation_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeviationResolveIn"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    api_api_get_design_values: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    api_api_get_asset: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                kind: string;
+                object_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    api_api_upload_asset: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                kind: string;
+                object_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": {
+                    /**
+                     * File
+                     * Format: binary
+                     */
+                    file: string;
+                };
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    api_api_list_project_assets: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    api_api_list_tile_types: {
+        parameters: {
+            query?: {
+                project_id?: number | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TileTypeOut"][];
+                };
+            };
+        };
+    };
+    api_api_create_tile_type: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TileTypeCreateIn"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TileTypeOut"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    api_api_delete_tile_type: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tile_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    api_api_update_tile_type: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tile_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TileTypeUpdateIn"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TileTypeOut"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    api_api_seed_tile_types: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TileTypeOut"][];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
                 };
             };
         };

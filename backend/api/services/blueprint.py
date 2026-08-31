@@ -9,7 +9,7 @@ breaking change.
 from typing import Any
 
 from ..models import DialogueEdge, EntityType, Level, Project
-from . import addressing, derived, storage, yarn_export
+from . import addressing, assets, derived, storage, yarn_export
 
 FORMAT = "gameblueprint/0.1"
 
@@ -120,8 +120,25 @@ def _connections_for(location) -> list[dict]:
     return out
 
 
+def _location_cells(loc, layout) -> dict | None:
+    """A location's rectangle in grid cells, or None when it isn't bound to space.
+
+    `extent: "level"` resolves to the whole grid here rather than staying implicit, so a
+    builder reads one rectangle for every placed location and never has to special-case the
+    level-sized one. Same frame as `Level.layout` and the exported entity coordinates:
+    top-left origin, y down, so nothing needs converting.
+    """
+    if loc.extent == "level":
+        rows = (layout or {}).get("rows") if isinstance(layout, dict) else None
+        if not rows:
+            return None
+        return {"x": 0, "y": 0, "width": len(rows[0]), "height": len(rows)}
+    return loc.region or None
+
+
 def _locations_for(level) -> list[dict]:
-    """The level's places: detail fields, cast, exits, and the scenes set there."""
+    """The level's places: where each one sits, plus detail fields, cast, exits and scenes."""
+    layout = level.layout or {}
     return [
         _addressed(level.project_id, "location", {
             "id": loc.id,
@@ -132,7 +149,14 @@ def _locations_for(level) -> list[dict]:
             "scale": loc.scale,
             "mood": loc.mood,
             "props": loc.props or [],
+            # How much of the level this place is ("level" | "area" | "point" | "" unplaced),
+            # and the cells it covers. An unplaced location is still worth building as
+            # dressing and dialogue context — it just has no region to attach it to.
+            "extent": loc.extent,
+            "region": _location_cells(loc, layout),
             "image_url": storage.view_url(loc.image_key),
+            # Reference art for the builder to look at, not something drawn into the level.
+            "asset_url": assets.asset_url("location", loc.id) if loc.image_key else "",
             "characters": [{"id": c.id, "name": c.name} for c in loc.characters.all()],
             "connections": _connections_for(loc),
             "scene_ids": [s.id for s in loc.scenes.all()],
@@ -193,6 +217,7 @@ def _addressed(project_id: int, object_type: str, payload: dict[str, Any]) -> di
 
 def build_blueprint(project: Project) -> dict[str, Any]:
     entity_types = list(project.entity_types.all())
+    tile_types = list(project.tile_types.all())
     glyph_to_entity = {e.glyph: e for e in entity_types}
     levels = list(
         project.levels.prefetch_related(
@@ -222,6 +247,8 @@ def build_blueprint(project: Project) -> dict[str, Any]:
         systems_out[sys_id] = entry
 
     tile_legend: dict[str, str] = dict(BUILTIN_TILES)
+    for t in tile_types:
+        tile_legend[t.glyph] = f"{t.name} (terrain)"
     for e in entity_types:
         tile_legend[e.glyph] = f"{e.name} ({e.category})"
 
@@ -236,6 +263,8 @@ def build_blueprint(project: Project) -> dict[str, Any]:
                 "layout": level.layout or None,
                 "entities": _entities_from_layout(level.layout or {}, glyph_to_entity),
                 "intro_scene_id": level.intro_scene_id,
+                # Key art for the level — reference the builder looks at, not tiles.
+                "asset_url": assets.asset_url("level", level.id) if level.image_key else "",
                 "on_complete": {"next_level_id": next_level.id if next_level else None},
                 "locations": _locations_for(level),
                 "scenes": [
@@ -261,6 +290,8 @@ def build_blueprint(project: Project) -> dict[str, Any]:
             "address": addressing.project_address(project.name),
             "dimension": project.dimension or None,
             "genre": project.genre or None,
+            # Key art for the whole game — the visual touchstone, when the creator set one.
+            "asset_url": assets.asset_url("project", project.id) if project.image_key else "",
         },
         "systems": systems_out,
         "hud_layout": project.hud_layout or {},
@@ -278,6 +309,7 @@ def build_blueprint(project: Project) -> dict[str, Any]:
                 "params": a.params or {},
                 "unlock_requirements": a.unlock_requirements or [],
                 "order": a.order,
+                "asset_url": assets.asset_url("ability", a.id) if a.image_key else "",
             })
             for a in project.abilities.all()
         ],
@@ -287,6 +319,10 @@ def build_blueprint(project: Project) -> dict[str, Any]:
                 "name": c.name,
                 "description": c.description,
                 "image_url": storage.view_url(c.image_key),
+                # Durable download path (view_url above expires in an hour and is for the
+                # browser). "" when nothing has been uploaded — greybox that character.
+                "asset_url": assets.asset_url("character", c.id) if c.image_key else "",
+                "sprite": assets.normalize_sprite(c.sprite),
                 "traits": _resolved_traits(c, project_trait_defs),
                 "relationships": [
                     {
@@ -308,8 +344,28 @@ def build_blueprint(project: Project) -> dict[str, Any]:
                 "description": e.description,
                 "behavior": e.behavior or {},
                 "image_url": storage.view_url(e.image_key),
+                # Durable download path; "" when there is no art, which is the common case and
+                # means "greybox it". Unlike image_url this doesn't expire mid-build.
+                "asset_url": assets.asset_url("entity", e.id) if e.image_key else "",
+                # How to use that art: {cells_wide, cells_high, frames, fps} in grid cells.
+                "sprite": assets.normalize_sprite(e.sprite),
             })
             for e in entity_types
+        ],
+        "tile_types": [
+            {
+                "id": t.id,
+                "name": t.name,
+                "glyph": t.glyph,
+                "collision": t.collision,
+                "behavior": t.behavior or {},
+                # Read this: the bounded `behavior` above is the mechanical part, and anything
+                # the creator invented that it can't express is written here in their words.
+                "description": t.description,
+                "color": t.color,
+                "order": t.order,
+            }
+            for t in tile_types
         ],
         "tile_legend": tile_legend,
         "levels": levels_out,

@@ -234,3 +234,50 @@
   align-self: flex-start;
   color: var(--orange);
 }
+
+/* Sprite geometry — how an uploaded image maps onto the grid. Shown only once art exists. */
+.entity-editor__sprite {
+  border-top: 1px solid var(--line);
+  padding-top: 0.85rem;
+  margin-top: 0.25rem;
+}
+
+.entity-editor__sprite-title {
+  margin: 0 0 0.2rem;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.entity-editor__sprite-hint {
+  margin: 0.3rem 0 0;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.entity-editor__sprite-fields {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.5rem;
+  margin-top: 0.6rem;
+}
+
+.entity-editor__sprite-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.entity-editor__sprite-field input {
+  width: 100%;
+  padding: 0.3rem 0.4rem;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--bg-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.85rem;
+}
